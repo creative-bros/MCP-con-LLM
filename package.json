@@ -1,0 +1,17 @@
+{
+  "name": "legacy-mcp-portal",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --check index.js && node --check src/store.js && node --check src/mcp.js && node --check src/ai.js && node --check public/app.js",
+    "mcp:check": "node scripts/check-mcp.js"
+  },
+  "dependencies": {
+    "axios": "^1.15.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
+  }
+}

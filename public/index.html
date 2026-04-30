@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Legacy MCP Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow"></div>
+
+    <main class="shell">
+      <div id="flash" class="flash hidden" aria-live="polite"></div>
+
+      <section id="auth-view" class="auth-view">
+        <header class="auth-topbar">
+          <div class="auth-brandline">
+            <p class="eyebrow">Legacy MCP Portal</p>
+          </div>
+          <button id="auth-open" class="cta" type="button">Acceder</button>
+        </header>
+
+        <nav class="section-nav" aria-label="Secciones principales">
+          <a href="#section-inicio">Inicio</a>
+          <a href="#section-workspace">Workspace</a>
+          <a href="#section-conectar">Conectar</a>
+          <a href="#section-mcp">MCP</a>
+          <a href="#section-ejemplo">Ejemplo</a>
+        </nav>
+
+        <div class="auth-layout">
+          <div id="section-inicio" class="auth-copy">
+            <h1>Un login por desarrollador. Una API key por sistema. Un MCP listo para compartir.</h1>
+            <p class="intro">
+              Cada desarrollador entra con su propia cuenta, conecta su API key, registra endpoints o crea tablas internas y comparte un MCP listo para su cliente.
+            </p>
+          </div>
+
+          <div class="auth-side">
+            <div class="auth-steps">
+              <article id="section-workspace" class="step-card">
+                <span class="step-number">1</span>
+                <div>
+                  <strong>Crea tu workspace</strong>
+                  <p>Tu cuenta separa tools, tablas, API keys y datos del resto del equipo.</p>
+                </div>
+              </article>
+              <article id="section-conectar" class="step-card">
+                <span class="step-number">2</span>
+                <div>
+                  <strong>Conecta tu sistema</strong>
+                  <p>Registra APIs existentes o genera estructuras internas desde una instruccion.</p>
+                </div>
+              </article>
+              <article id="section-mcp" class="step-card">
+                <span class="step-number">3</span>
+                <div>
+                  <strong>Comparte el MCP</strong>
+                  <p>Tu usuario final habla con ChatGPT y el MCP ejecuta las acciones por ti.</p>
+                </div>
+              </article>
+            </div>
+
+            <div id="section-ejemplo" class="example-card">
+              <small>Ejemplo de instruccion</small>
+              <pre class="hero-example">agrega al cliente:
+Fernando Hernandez
+fernando@email.com
+5526997998</pre>
+            </div>
+          </div>
+        </div>
+
+        <div id="auth-modal" class="auth-modal hidden">
+          <div id="auth-overlay" class="auth-overlay"></div>
+          <div class="auth-dialog">
+            <div class="auth-dialog-head">
+              <div>
+                <p class="eyebrow">Acceso</p>
+                <h2>Entra o crea tu workspace</h2>
+              </div>
+              <button id="auth-close" class="ghost" type="button">Cerrar</button>
+            </div>
+
+            <div class="auth-tabs">
+              <button id="tab-login" class="auth-tab is-active" data-auth-target="login" type="button">Entrar</button>
+              <button id="tab-register" class="auth-tab" data-auth-target="register" type="button">Crear cuenta</button>
+            </div>
+
+            <div id="panel-login" class="auth-panel">
+              <p>Vuelve a tu portal y a tu MCP personal.</p>
+              <form id="login-form" class="form">
+                <label>Correo <input name="email" type="email" placeholder="ignacio@empresa.com" required /></label>
+                <label>Contrasena <input name="password" type="password" placeholder="Tu contrasena" required /></label>
+                <button>Entrar al sistema</button>
+              </form>
+            </div>
+
+            <div id="panel-register" class="auth-panel hidden">
+              <p>Abre un espacio nuevo para tu sistema.</p>
+              <form id="register-form" class="form">
+                <label>Nombre <input name="name" placeholder="Ignacio Rivera" required /></label>
+                <label>Correo <input name="email" type="email" placeholder="ignacio@empresa.com" required /></label>
+                <label>Contrasena <input name="password" type="password" placeholder="Minimo 6 caracteres" required /></label>
+                <button>Crear cuenta</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="app-view" class="app-view hidden">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Portal del desarrollador</p>
+            <h1 id="welcome-title">Workspace</h1>
+            <p id="welcome-subtitle" class="subtle"></p>
+          </div>
+          <div class="topbar-actions">
+            <button id="refresh" class="secondary">Actualizar</button>
+            <button id="logout">Salir</button>
+          </div>
+        </header>
+
+        <section class="overview-strip">
+          <article class="status-banner">
+            <p class="eyebrow">Siguiente paso</p>
+            <h2 id="next-step-title">Configura tu workspace</h2>
+            <p id="next-step-copy" class="subtle"></p>
+          </article>
+
+          <div class="mini-stats">
+            <article class="stat-card">
+              <small>Tools</small>
+              <strong id="tools-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <small>Tablas</small>
+              <strong id="tables-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <small>Bases</small>
+              <strong id="db-count">0</strong>
+            </article>
+            <article class="stat-card">
+              <small>Registros</small>
+              <strong id="rows-count">0</strong>
+            </article>
+          </div>
+        </section>
+
+        <section class="section-copy">
+          <p class="eyebrow">Operar</p>
+          <h2>Prueba el flujo como si fueras el usuario final</h2>
+        </section>
+
+        <section class="hero-grid">
+          <article class="panel panel-large">
+            <div class="panel-head">
+              <div>
+                <h2>Centro operativo</h2>
+                <p>Escribe instrucciones como si ya estuvieras dentro del sistema.</p>
+              </div>
+              <button id="load-demo" class="secondary">Cargar demo</button>
+            </div>
+
+            <form id="command-form" class="command-form">
+              <textarea id="command" rows="5">agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998</textarea>
+              <div class="prompt-rack">
+                <button class="prompt-chip" type="button" data-prompt="agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998">Alta de cliente</button>
+                <button class="prompt-chip" type="button" data-prompt="crea una factura para el cliente clientes_001 por 1500 de renta mensual">Factura</button>
+                <button class="prompt-chip" type="button" data-prompt="muestame los clientes activos del sistema">Consulta</button>
+              </div>
+              <div class="command-actions">
+                <button>Modo simple</button>
+                <button id="ai-command" type="button" class="secondary">Con IA</button>
+              </div>
+            </form>
+
+            <div class="console-head">
+              <small>Respuesta del sistema</small>
+            </div>
+            <pre id="output">Esperando una instruccion.</pre>
+          </article>
+
+          <aside class="panel panel-accent">
+            <div class="panel-head">
+              <div>
+                <h2>Cuenta y MCP</h2>
+                <p>Cada desarrollador guarda su propia API key.</p>
+              </div>
+            </div>
+
+            <div class="meta-stack">
+              <div class="meta-box">
+                <small>Estado OpenAI</small>
+                <strong id="ai-status">Sin configurar</strong>
+              </div>
+              <div class="meta-box">
+                <small>Workspace</small>
+                <strong id="workspace-key">-</strong>
+              </div>
+              <div class="meta-box">
+                <small>Acceso externo</small>
+                <strong id="https-status">Local</strong>
+              </div>
+            </div>
+
+            <form id="settings-form" class="form">
+              <label>OpenAI API key <input name="openaiApiKey" type="password" placeholder="sk-..." /></label>
+              <label>Modelo <input name="openaiModel" value="gpt-4.1-mini" /></label>
+              <button>Guardar configuracion</button>
+            </form>
+
+            <label class="mcp-label">
+              URL MCP personal
+              <input id="mcp-url" readonly />
+            </label>
+
+            <div class="row">
+              <button id="copy-url" class="secondary" type="button">Copiar URL</button>
+              <button id="copy-steps" class="secondary" type="button">Copiar pasos</button>
+            </div>
+
+            <p id="ready-note" class="mini-note"></p>
+          </aside>
+        </section>
+
+        <section class="section-copy">
+          <p class="eyebrow">Construir</p>
+          <h2>Crea la estructura del sistema que quieres controlar desde chat</h2>
+        </section>
+
+        <section class="workspace-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Crear tablas con IA</h2>
+                <p>Dile al sistema que campos quieres y genera tools internas automaticamente.</p>
+              </div>
+            </div>
+
+            <form id="ai-table-form" class="form">
+              <label>
+                Instruccion
+                <textarea name="prompt" rows="5" placeholder="Crea una tabla prospectos con nombre, empresa, telefono, correo, status y nota. Status 1 significa activo y -1 significa descartado."></textarea>
+              </label>
+              <button>Crear tabla con IA</button>
+            </form>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Crear tabla manual</h2>
+                <p>Si ya tienes claro el schema, puedes capturarlo directo.</p>
+              </div>
+            </div>
+
+            <form id="table-form" class="form">
+              <div class="two">
+                <label>Nombre <input name="name" placeholder="clientes" required /></label>
+                <label>Titulo <input name="title" placeholder="Clientes" /></label>
+              </div>
+              <label>Descripcion <textarea name="description" rows="3" placeholder="Tabla para altas de clientes desde chat."></textarea></label>
+              <label>Reglas <textarea name="rules" rows="3" placeholder="status 1 activo, -1 inactivo"></textarea></label>
+              <details>
+                <summary>Campos JSON</summary>
+                <textarea name="fields" rows="10">[
+  { "name": "nombre", "label": "Nombre", "type": "string", "required": true },
+  { "name": "email", "label": "Email", "type": "string", "required": true },
+  { "name": "telefono", "label": "Telefono", "type": "string", "required": true }
+]</textarea>
+              </details>
+              <button>Guardar tabla</button>
+            </form>
+          </article>
+        </section>
+
+        <section class="section-copy">
+          <p class="eyebrow">Conectar</p>
+          <h2>Agrega tus APIs y la documentacion que ChatGPT necesita entender</h2>
+        </section>
+
+        <section class="workspace-grid">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Tools API externas</h2>
+                <p>Registra endpoints como /agregaCliente o /emiteFactura.</p>
+              </div>
+            </div>
+
+            <form id="tool-form" class="form">
+              <div class="two">
+                <label>Nombre MCP <input name="name" placeholder="agregaCliente" required /></label>
+                <label>Metodo
+                  <select name="method">
+                    <option>POST</option>
+                    <option>GET</option>
+                    <option>PUT</option>
+                    <option>PATCH</option>
+                    <option>DELETE</option>
+                  </select>
+                </label>
+              </div>
+              <label>Titulo <input name="title" placeholder="Agrega cliente" /></label>
+              <label>URL API <input name="url" placeholder="https://tu-sistema.com/api/clientes" required /></label>
+              <label>Descripcion <textarea name="description" rows="3" placeholder="Da de alta un cliente con nombre, email y telefono."></textarea></label>
+              <details>
+                <summary>Schema JSON</summary>
+                <textarea name="inputSchema" rows="10">{
+  "type": "object",
+  "properties": {
+    "nombre": { "type": "string" },
+    "email": { "type": "string" },
+    "telefono": { "type": "string" }
+  },
+  "required": ["nombre", "email", "telefono"],
+  "additionalProperties": false
+}</textarea>
+              </details>
+              <button>Guardar tool</button>
+            </form>
+
+            <div id="tools" class="list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Documentacion de base</h2>
+                <p>Agrega reglas y un SQL endpoint si tu sistema ya lo tiene.</p>
+              </div>
+            </div>
+
+            <form id="db-form" class="form">
+              <label>Nombre <input name="name" placeholder="baseproduccion" required /></label>
+              <label>Titulo <input name="title" placeholder="Base produccion" /></label>
+              <label>SQL API URL opcional <input name="sqlApiUrl" placeholder="https://tu-sistema.com/sql/read" /></label>
+              <label>Documentacion <textarea name="documentation" rows="4" placeholder="clientes(id, nombre, email, telefono, status)"></textarea></label>
+              <label>Reglas <textarea name="rules" rows="4" placeholder="status = 1 activo, status = -1 inactivo"></textarea></label>
+              <button>Guardar base</button>
+            </form>
+
+            <div id="databases" class="list"></div>
+          </article>
+        </section>
+
+        <section class="section-copy">
+          <p class="eyebrow">Ver datos</p>
+          <h2>Revisa lo que ya puede crear y consultar tu MCP</h2>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Tablas y datos</h2>
+              <p>Cuando se creen registros desde el chat o el MCP, los ves aqui.</p>
+            </div>
+            <div class="row">
+              <button id="mcp-list" class="secondary" type="button">Probar tools/list</button>
+            </div>
+          </div>
+
+          <div id="tables" class="table-grid"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
