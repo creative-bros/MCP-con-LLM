@@ -484,6 +484,47 @@ small {
   border-color: rgba(200, 111, 74, 0.18);
 }
 
+.account-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.account-head {
+  gap: 14px;
+}
+
+.account-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(37, 49, 60, 0.08);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.account-ready-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #b49c7b;
+  box-shadow: 0 0 0 4px rgba(180, 156, 123, 0.16);
+}
+
+.account-panel[data-connection="ready"] .account-ready {
+  background: rgba(96, 148, 113, 0.12);
+  color: #315240;
+  border-color: rgba(96, 148, 113, 0.18);
+}
+
+.account-panel[data-connection="ready"] .account-ready-dot {
+  background: #5d9c74;
+  box-shadow: 0 0 0 4px rgba(93, 156, 116, 0.14);
+}
+
 .panel-head,
 .item-row {
   justify-content: space-between;
@@ -555,6 +596,11 @@ pre {
   margin-bottom: 14px;
 }
 
+.account-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
 .meta-box {
   min-width: 0;
   padding: 14px;
@@ -566,14 +612,120 @@ pre {
 .meta-box strong {
   display: block;
   margin-top: 8px;
+  font-size: 1.2rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.meta-help {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.meta-box-wide {
+  grid-column: 1 / -1;
+}
+
+#workspace-key,
+#mcp-url {
+  font-family: "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0;
+}
+
+#workspace-key {
+  font-size: 1rem;
+}
+
+.account-section {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.46);
+  border: 1px solid rgba(37, 49, 60, 0.08);
+}
+
+.account-section-head {
+  margin-bottom: 12px;
+}
+
+.account-section-head h3 {
+  margin-bottom: 6px;
+}
+
+.account-section-head p {
+  margin: 0;
+  line-height: 1.55;
 }
 
 .mcp-label {
-  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.mcp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(180, 156, 123, 0.14);
+  color: #7c6347;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.account-panel[data-connection="ready"] .mcp-badge {
+  background: rgba(96, 148, 113, 0.12);
+  color: #315240;
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.account-note {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.account-note-line {
+  width: 3px;
+  height: 100%;
+  min-height: 48px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(200, 111, 74, 0.55), rgba(200, 111, 74, 0.08));
 }
 
 .mini-note {
-  margin: 10px 0 0;
+  margin: 0;
+}
+
+.account-tip {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px dashed rgba(159, 74, 41, 0.22);
+}
+
+.account-tip strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+
+.account-tip p {
+  margin: 0;
+  line-height: 1.55;
 }
 
 details {
@@ -732,6 +884,11 @@ th {
   .two,
   .meta-stack,
   .mini-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .account-actions,
+  .account-meta {
     grid-template-columns: 1fr;
   }
 

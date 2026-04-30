@@ -226,13 +226,20 @@ function render() {
   if (!logged) return;
 
   const step = nextStep();
+  const httpsReady = state.chatGptReady;
   $("#welcome-title").textContent = `Hola, ${state.user.name}`;
   $("#welcome-subtitle").textContent = `${state.user.email} | tu MCP es independiente del resto de desarrolladores`;
   $("#ai-status").textContent = state.ai?.configured
     ? `${state.ai.model} (${state.ai.keyPreview})`
     : "Sin key guardada";
   $("#workspace-key").textContent = state.user.workspaceKey;
-  $("#https-status").textContent = state.chatGptReady ? "HTTPS listo" : "Solo local";
+  $("#account-panel").dataset.connection = httpsReady ? "ready" : "local";
+  $("#account-ready-label").textContent = httpsReady ? "Listo para conectar" : "Pendiente de publicar";
+  $("#https-status").textContent = httpsReady ? "HTTPS listo" : "Solo local";
+  $("#https-help").textContent = httpsReady
+    ? "Tu URL ya puede usarse desde fuera del sistema."
+    : "Necesitas un dominio o tunel HTTPS para conectar ChatGPT.";
+  $("#mcp-badge").textContent = httpsReady ? "Listo para ChatGPT" : "Requiere HTTPS";
   $("#next-step-title").textContent = step.title;
   $("#next-step-copy").textContent = step.copy;
   $("#tools-count").textContent = state.tools.length;
@@ -240,7 +247,7 @@ function render() {
   $("#db-count").textContent = state.databases.length;
   $("#rows-count").textContent = totalRows();
   $("#mcp-url").value = state.mcpUrl;
-  $("#ready-note").textContent = state.chatGptReady
+  $("#ready-note").textContent = httpsReady
     ? "Tu URL ya esta en HTTPS y se puede usar directo en ChatGPT."
     : "Esta URL es local. Para ChatGPT necesitas tunel HTTPS o dominio.";
 

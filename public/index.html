@@ -183,46 +183,76 @@ fernando@email.com
             <pre id="output">Esperando una instruccion.</pre>
           </article>
 
-          <aside class="panel panel-accent">
-            <div class="panel-head">
+          <aside id="account-panel" class="panel panel-accent account-panel">
+            <div class="panel-head account-head">
               <div>
+                <p class="eyebrow">Conexion</p>
                 <h2>Cuenta y MCP</h2>
                 <p>Cada desarrollador guarda su propia API key.</p>
               </div>
+              <div id="account-ready" class="account-ready">
+                <span class="account-ready-dot"></span>
+                <span id="account-ready-label">Solo local</span>
+              </div>
             </div>
 
-            <div class="meta-stack">
+            <div class="meta-stack account-meta">
               <div class="meta-box">
                 <small>Estado OpenAI</small>
                 <strong id="ai-status">Sin configurar</strong>
+                <span class="meta-help">Activa IA del desarrollador</span>
               </div>
               <div class="meta-box">
                 <small>Workspace</small>
                 <strong id="workspace-key">-</strong>
+                <span class="meta-help">Identificador unico de tu MCP</span>
               </div>
-              <div class="meta-box">
+              <div class="meta-box meta-box-wide">
                 <small>Acceso externo</small>
                 <strong id="https-status">Local</strong>
+                <span id="https-help" class="meta-help">Necesitas HTTPS para conectar ChatGPT</span>
               </div>
             </div>
 
-            <form id="settings-form" class="form">
-              <label>OpenAI API key <input name="openaiApiKey" type="password" placeholder="sk-..." /></label>
-              <label>Modelo <input name="openaiModel" value="gpt-4.1-mini" /></label>
-              <button>Guardar configuracion</button>
-            </form>
+            <section class="account-section">
+              <div class="account-section-head">
+                <h3>Configuracion IA</h3>
+                <p>Guarda la key del desarrollador para usar el modo conversacional y crear tablas con IA.</p>
+              </div>
 
-            <label class="mcp-label">
-              URL MCP personal
-              <input id="mcp-url" readonly />
-            </label>
+              <form id="settings-form" class="form">
+                <label>OpenAI API key <input name="openaiApiKey" type="password" placeholder="sk-..." /></label>
+                <label>Modelo <input name="openaiModel" value="gpt-4.1-mini" /></label>
+                <button>Guardar configuracion</button>
+              </form>
+            </section>
 
-            <div class="row">
-              <button id="copy-url" class="secondary" type="button">Copiar URL</button>
-              <button id="copy-steps" class="secondary" type="button">Copiar pasos</button>
+            <section class="account-section">
+              <div class="account-section-head">
+                <h3>URL MCP personal</h3>
+                <p>Esta es la direccion que conectas a ChatGPT o compartes con el cliente.</p>
+              </div>
+
+              <label class="mcp-label">
+                <span id="mcp-badge" class="mcp-badge">Requiere HTTPS</span>
+                <input id="mcp-url" readonly />
+              </label>
+
+              <div class="account-actions">
+                <button id="copy-url" class="secondary" type="button">Copiar URL</button>
+                <button id="copy-steps" class="secondary" type="button">Copiar pasos</button>
+              </div>
+
+              <div class="account-note">
+                <span class="account-note-line"></span>
+                <p id="ready-note" class="mini-note"></p>
+              </div>
+            </section>
+
+            <div class="account-tip">
+              <strong>Tip rapido</strong>
+              <p>Primero guarda tu key, luego genera el workspace y al final comparte la URL MCP.</p>
             </div>
-
-            <p id="ready-note" class="mini-note"></p>
           </aside>
         </section>
 
