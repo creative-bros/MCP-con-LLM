@@ -150,6 +150,56 @@ fernando@email.com
         </section>
 
         <section class="section-copy">
+          <p class="eyebrow">Proyectos</p>
+          <h2>Crea un proyecto por sistema y dale su propio MCP</h2>
+        </section>
+
+        <section class="workspace-grid project-stage">
+          <article class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Nuevo proyecto</h2>
+                <p>Registra el sistema, las indicaciones para ChatGPT y la URL base que usaras para sus APIs.</p>
+              </div>
+              <button id="new-project" class="secondary" type="button">Nuevo proyecto</button>
+            </div>
+
+            <form id="project-form" class="form">
+              <input name="projectId" type="hidden" />
+              <div class="two">
+                <label>Nombre visible <input name="title" placeholder="Boleo Seguros" required /></label>
+                <label>Nombre tecnico <input name="name" placeholder="boleo_seguros" /></label>
+              </div>
+              <label>Descripcion <textarea name="description" rows="3" placeholder="Sistema para administrar clientes, polizas, cobros y renovaciones."></textarea></label>
+              <label>Indicaciones para ChatGPT <textarea name="context" rows="4" placeholder="Una poliza vigente tiene status 1. La renovacion pendiente usa status 7. El numero de poliza se guarda en folio. Si el usuario pide ver algo, primero consulta y luego resume el resultado claramente."></textarea></label>
+              <label>URL base del sistema opcional <input name="apiBaseUrl" placeholder="https://tu-sistema.com/api" /></label>
+              <button>Guardar proyecto</button>
+            </form>
+          </article>
+
+          <article class="panel panel-accent">
+            <div class="panel-head">
+              <div>
+                <h2>Proyecto activo</h2>
+                <p id="project-summary">Selecciona el sistema que quieres exponer en el MCP y que ChatGPT va a operar.</p>
+              </div>
+            </div>
+
+            <div class="project-focus">
+              <strong id="project-title">Sin proyecto</strong>
+              <p id="project-context" class="subtle">Todo lo que registres abajo se guarda dentro del proyecto activo.</p>
+            </div>
+
+            <label>
+              Abrir proyecto
+              <select id="project-select"></select>
+            </label>
+
+            <div id="project-cards" class="list project-list"></div>
+          </article>
+        </section>
+
+        <section class="section-copy">
           <p class="eyebrow">Operar</p>
           <h2>Prueba el flujo como si fueras el usuario final</h2>
         </section>
@@ -159,7 +209,7 @@ fernando@email.com
             <div class="panel-head">
               <div>
                 <h2>Centro operativo</h2>
-                <p>Escribe instrucciones como si ya estuvieras dentro del sistema.</p>
+                <p>Escribe instrucciones como si ya estuvieras dentro del proyecto conectado.</p>
               </div>
               <button id="load-demo" class="secondary">Cargar demo</button>
             </div>
@@ -169,7 +219,7 @@ fernando@email.com
               <div class="prompt-rack">
                 <button class="prompt-chip" type="button" data-prompt="agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998">Alta de cliente</button>
                 <button class="prompt-chip" type="button" data-prompt="crea una factura para el cliente clientes_001 por 1500 de renta mensual">Factura</button>
-                <button class="prompt-chip" type="button" data-prompt="muestame los clientes activos del sistema">Consulta</button>
+                <button class="prompt-chip" type="button" data-prompt="cuantas polizas tiene el sistema y cuantas siguen vigentes">Consulta</button>
               </div>
               <div class="command-actions">
                 <button>Modo simple</button>
@@ -203,9 +253,14 @@ fernando@email.com
                 <span class="meta-help">Activa IA del desarrollador</span>
               </div>
               <div class="meta-box">
-                <small>Workspace</small>
+                <small>Workspace dev</small>
                 <strong id="workspace-key">-</strong>
                 <span class="meta-help">Identificador unico de tu MCP</span>
+              </div>
+              <div class="meta-box">
+                <small>Proyecto MCP</small>
+                <strong id="project-key">-</strong>
+                <span class="meta-help">Proyecto que vera ChatGPT</span>
               </div>
               <div class="meta-box meta-box-wide">
                 <small>Acceso externo</small>
@@ -230,7 +285,7 @@ fernando@email.com
             <section class="account-section">
               <div class="account-section-head">
                 <h3>URL MCP personal</h3>
-                <p>Esta es la direccion que conectas a ChatGPT o compartes con el cliente.</p>
+                <p>Esta es la direccion del proyecto activo que conectas a ChatGPT o compartes con el cliente.</p>
               </div>
 
               <label class="mcp-label">
@@ -251,14 +306,14 @@ fernando@email.com
 
             <div class="account-tip">
               <strong>Tip rapido</strong>
-              <p>Primero guarda tu key, luego genera el workspace y al final comparte la URL MCP.</p>
+              <p>Primero crea el proyecto, luego registra sus tools y su MySQL, y al final comparte la URL MCP de ese proyecto.</p>
             </div>
           </aside>
         </section>
 
         <section class="section-copy">
           <p class="eyebrow">Construir</p>
-          <h2>Crea la estructura del sistema que quieres controlar desde chat</h2>
+          <h2>Crea la estructura interna del proyecto que quieres controlar desde chat</h2>
         </section>
 
         <section class="workspace-grid">
@@ -266,7 +321,7 @@ fernando@email.com
             <div class="panel-head">
               <div>
                 <h2>Crear tablas con IA</h2>
-                <p>Dile al sistema que campos quieres y genera tools internas automaticamente.</p>
+                <p>Dile al sistema que campos quieres dentro del proyecto activo y genera tools internas automaticamente.</p>
               </div>
             </div>
 
@@ -309,7 +364,7 @@ fernando@email.com
 
         <section class="section-copy">
           <p class="eyebrow">Conectar</p>
-          <h2>Agrega tus APIs y la documentacion que ChatGPT necesita entender</h2>
+          <h2>Agrega las APIs del proyecto y la base que ChatGPT necesita entender</h2>
         </section>
 
         <section class="workspace-grid">
@@ -317,7 +372,7 @@ fernando@email.com
             <div class="panel-head">
               <div>
                 <h2>Tools API externas</h2>
-                <p>Registra endpoints como /agregaCliente o /emiteFactura.</p>
+                <p>Registra endpoints como /agregaCliente o /emiteFactura con su entrada y salida.</p>
               </div>
             </div>
 
@@ -350,6 +405,7 @@ fernando@email.com
   "additionalProperties": false
 }</textarea>
               </details>
+              <label>Salida esperada <textarea name="outputExample" rows="4" placeholder='{ "ok": true, "clienteId": 123, "mensaje": "Cliente creado" }'></textarea></label>
               <button>Guardar tool</button>
             </form>
 
@@ -360,16 +416,33 @@ fernando@email.com
             <div class="panel-head">
               <div>
                 <h2>Documentacion de base</h2>
-                <p>Agrega reglas y un SQL endpoint si tu sistema ya lo tiene.</p>
+                <p>Guarda SQL por HTTP, conexion MySQL directa o solo documentacion del proyecto.</p>
               </div>
             </div>
 
             <form id="db-form" class="form">
-              <label>Nombre <input name="name" placeholder="baseproduccion" required /></label>
+              <div class="two">
+                <label>Nombre <input name="name" placeholder="baseproduccion" required /></label>
+                <label>Modo
+                  <select name="mode">
+                    <option value="mysql">MySQL directa</option>
+                    <option value="http">SQL por HTTP</option>
+                    <option value="docs">Solo documentacion</option>
+                  </select>
+                </label>
+              </div>
               <label>Titulo <input name="title" placeholder="Base produccion" /></label>
+              <label>Nombre de tool SQL <input name="toolName" placeholder="consulta_polizas" /></label>
               <label>SQL API URL opcional <input name="sqlApiUrl" placeholder="https://tu-sistema.com/sql/read" /></label>
+              <div class="mysql-grid">
+                <label>Host <input name="host" placeholder="127.0.0.1" /></label>
+                <label>Puerto <input name="port" placeholder="3306" value="3306" /></label>
+                <label>Usuario <input name="user" placeholder="root" /></label>
+                <label>Password <input name="password" type="password" placeholder="••••••••" /></label>
+                <label class="mysql-wide">Base de datos <input name="database" placeholder="boleo_produccion" /></label>
+              </div>
               <label>Documentacion <textarea name="documentation" rows="4" placeholder="clientes(id, nombre, email, telefono, status)"></textarea></label>
-              <label>Reglas <textarea name="rules" rows="4" placeholder="status = 1 activo, status = -1 inactivo"></textarea></label>
+              <label>Reglas <textarea name="rules" rows="4" placeholder="status = 1 activo, status = -1 inactivo. Una poliza vigente tiene status = 1."></textarea></label>
               <button>Guardar base</button>
             </form>
 
@@ -379,7 +452,7 @@ fernando@email.com
 
         <section class="section-copy">
           <p class="eyebrow">Ver datos</p>
-          <h2>Revisa lo que ya puede crear y consultar tu MCP</h2>
+          <h2>Revisa lo que ya puede crear y consultar el MCP de este proyecto</h2>
         </section>
 
         <section class="panel">

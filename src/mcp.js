@@ -9,10 +9,15 @@ function jsonError(id, code, message) {
 }
 
 function apiToolToMcp(tool) {
+  const outputHint = tool.outputExample
+    ? `\n\nSalida esperada:\n${tool.outputExample}`
+    : tool.outputSchema
+      ? `\n\nSalida esperada:\n${JSON.stringify(tool.outputSchema, null, 2)}`
+      : "";
   return {
     name: tool.name,
     title: tool.title || tool.name,
-    description: tool.description,
+    description: `${tool.description || ""}${outputHint}`.trim(),
     inputSchema: tool.inputSchema,
     annotations: {
       title: tool.title || tool.name,
@@ -24,12 +29,51 @@ function apiToolToMcp(tool) {
   };
 }
 
+function guideToolToMcp() {
+  return {
+    name: "guiaProyecto",
+    title: "Guia del proyecto",
+    description:
+      "Explica que puede hacer este proyecto, que puede consultar, como visualizar informacion y que datos faltan para ejecutar acciones. " +
+      "Usa esta tool cuando el usuario pregunte que se puede hacer, como ver algo, o cuando necesites contexto antes de elegir otra tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        intent: {
+          type: "string",
+          enum: ["accion", "consulta", "visualizacion", "ayuda"],
+          description: "Tipo de intencion del usuario",
+        },
+        question: {
+          type: "string",
+          description: "Pregunta o instruccion original del usuario",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Guia del proyecto",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  };
+}
+
 function databaseToolToMcp(database) {
+  const connectionHint = database.mode === "mysql"
+    ? `Conexion MySQL directa a ${database.mysql?.host || "host no definido"}.`
+    : database.mode === "http"
+      ? `Consulta SQL por HTTP en ${database.sqlApiUrl || "sin URL"}.`
+      : database.mode === "internal"
+        ? "Consulta SQL sobre las tablas internas del proyecto."
+        : "Solo documentacion y reglas.";
   return {
     name: database.toolName,
     title: database.title || database.name,
     description:
-      `Consulta documentada de base de datos.\n\nDocumentacion:\n${database.documentation}\n\nReglas:\n${database.rules}\n\n` +
+      `${connectionHint}\n\nDocumentacion:\n${database.documentation}\n\nReglas:\n${database.rules}\n\n` +
       "Usa esta tool para pedir o ejecutar SQL read-only. Solo SELECT/WITH.",
     inputSchema: {
       type: "object",
@@ -47,6 +91,21 @@ function databaseToolToMcp(database) {
       openWorldHint: true,
     },
   };
+}
+
+function initializeInstructions(store, userId, projectKey = "") {
+  const guide = store.getProjectGuide(userId, projectKey, {});
+  return [
+    `Estas conectado al proyecto "${guide.project.title}".`,
+    guide.project.description ? `Descripcion: ${guide.project.description}` : "",
+    guide.project.context ? `Contexto operativo: ${guide.project.context}` : "",
+    "Clasifica cada solicitud del usuario en una de estas intenciones: accion, consulta, visualizacion o ayuda.",
+    "Si el usuario quiere realizar una accion, usa una tool de escritura y pide datos faltantes antes de ejecutar.",
+    "Si el usuario quiere visualizar o revisar informacion, usa una tool read-only o una tool de base y luego presenta el resultado de forma clara.",
+    "Si el usuario pregunta que se puede hacer o como ver algo, usa primero la tool guiaProyecto.",
+    "Para SQL solo se permite SELECT/WITH.",
+    "No inventes IDs, campos ni valores obligatorios.",
+  ].filter(Boolean).join(" ");
 }
 
 function mcpContent(value, isError = false) {
@@ -70,14 +129,15 @@ function assertReadOnly(sql) {
   return value;
 }
 
-export function listMcpTools(store, userId) {
+export function listMcpTools(store, userId, projectKey = "") {
   return [
-    ...store.getTools(userId).map(apiToolToMcp),
-    ...store.getDatabases(userId).map(databaseToolToMcp),
+    guideToolToMcp(),
+    ...store.getTools(userId, projectKey).map(apiToolToMcp),
+    ...store.getDatabases(userId, projectKey).map(databaseToolToMcp),
   ];
 }
 
-export async function handleMcpMessage(store, userId, message) {
+export async function handleMcpMessage(store, userId, message, projectKey = "") {
   if (!message || message.jsonrpc !== "2.0" || !message.method) {
     return jsonError(message?.id, -32600, "Invalid JSON-RPC request");
   }
@@ -91,15 +151,14 @@ export async function handleMcpMessage(store, userId, message) {
       serverInfo: {
         name: "legacy-mcp-portal",
         title: "Legacy MCP Portal",
-        version: "2.0.0",
+        version: "2.1.0",
       },
-      instructions:
-        "Usa estas tools para ejecutar acciones y consultar la base interna o legacy del desarrollador. Para acciones de escritura, pide confirmacion al usuario.",
+      instructions: initializeInstructions(store, userId, projectKey),
     });
   }
 
   if (message.method === "tools/list") {
-    return jsonRpc(message.id, { tools: listMcpTools(store, userId) });
+    return jsonRpc(message.id, { tools: listMcpTools(store, userId, projectKey) });
   }
 
   if (message.method === "tools/call") {
@@ -107,40 +166,12 @@ export async function handleMcpMessage(store, userId, message) {
     const args = message.params?.arguments || {};
     if (!name) return jsonError(message.id, -32602, "Falta params.name");
 
-    const databases = store.getDatabases(userId);
-    const database = databases.find((item) => item.toolName === name);
-
-    if (database) {
-      try {
-        const sql = assertReadOnly(args.sql);
-        if (!database.sqlApiUrl || !sql) {
-          return jsonRpc(
-            message.id,
-            mcpContent({
-              ok: true,
-              executed: false,
-              documentation: database.documentation,
-              rules: database.rules,
-              question: args.question || "",
-              note: "No se ejecuto SQL. Agrega sql o configura sqlApiUrl.",
-            }),
-          );
-        }
-
-        const response = await fetch(database.sqlApiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sql }),
-        });
-        const result = await response.json();
-        return jsonRpc(message.id, mcpContent({ ok: response.ok, sql, result }, !response.ok));
-      } catch (err) {
-        return jsonRpc(message.id, mcpContent({ ok: false, error: err.message }, true));
-      }
-    }
-
     try {
-      const result = await store.callTool(userId, name, args);
+      if (name === "guiaProyecto") {
+        return jsonRpc(message.id, mcpContent(store.getProjectGuide(userId, projectKey, args)));
+      }
+      if (args.sql) args.sql = assertReadOnly(args.sql);
+      const result = await store.callOperation(userId, name, args, projectKey);
       return jsonRpc(message.id, mcpContent(result, !result.ok));
     } catch (err) {
       return jsonRpc(message.id, mcpContent({ ok: false, error: err.message }, true));

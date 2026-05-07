@@ -474,6 +474,10 @@ small {
   gap: 18px;
 }
 
+.project-stage {
+  align-items: start;
+}
+
 .panel-large {
   min-height: 440px;
 }
@@ -545,10 +549,39 @@ small {
   margin-top: 14px;
 }
 
+.project-focus {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(37, 49, 60, 0.08);
+  margin-bottom: 14px;
+}
+
+.project-focus strong {
+  font-size: 1.2rem;
+  color: var(--ink);
+}
+
+.project-focus p {
+  margin: 0;
+}
+
 .two {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 180px;
   gap: 10px;
+}
+
+.mysql-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mysql-wide {
+  grid-column: 1 / -1;
 }
 
 label {
@@ -597,7 +630,7 @@ pre {
 }
 
 .account-meta {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 0;
 }
 
@@ -764,6 +797,11 @@ details textarea {
   color: var(--ink);
 }
 
+.item p {
+  margin: 10px 0;
+  line-height: 1.55;
+}
+
 .badge,
 .chip {
   display: inline-flex;
@@ -790,6 +828,15 @@ details textarea {
 
 .table-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-card.is-active {
+  border-color: rgba(200, 111, 74, 0.22);
+  box-shadow: 0 16px 32px rgba(159, 74, 41, 0.08);
+}
+
+.project-actions {
+  margin-top: 8px;
 }
 
 .table-wrap {
@@ -855,6 +902,11 @@ th {
   .meta-stack,
   .mini-stats {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .account-meta,
+  .mysql-grid {
+    grid-template-columns: 1fr;
   }
 }
 

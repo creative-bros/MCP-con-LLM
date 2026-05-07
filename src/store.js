@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import mysql from "mysql2/promise";
 
 const dataFile = path.join(process.cwd(), "data", "portal.json");
 const defaultModel = "gpt-4.1-mini";
 
 const initialData = {
-  version: 2,
+  version: 3,
   users: [],
   sessions: [],
 };
@@ -142,17 +143,466 @@ function sanitizeUser(user) {
   };
 }
 
-function ensureUser(data, userId) {
-  const user = data.users.find((item) => item.id === userId);
-  if (!user) throw new Error("Usuario no encontrado.");
-  user.settings ||= { openaiApiKey: "", openaiModel: defaultModel };
-  user.tools ||= [];
-  user.databases ||= [];
-  user.tables ||= [];
-  return user;
+function ensureReadOnlySql(sql) {
+  const value = String(sql || "").trim();
+  if (!value) return "";
+  if (!/^(select|with)\b/i.test(value)) {
+    throw new Error("Solo se permite SQL de lectura: SELECT/WITH.");
+  }
+  if (/(insert|update|delete|drop|alter|truncate|create|grant|revoke)\b/i.test(value)) {
+    throw new Error("SQL bloqueado por seguridad.");
+  }
+  return value;
+}
+
+function aiStatusFromUser(user) {
+  return {
+    configured: Boolean(user.settings?.openaiApiKey),
+    model: user.settings?.openaiModel || defaultModel,
+    keyPreview: keyPreview(user.settings?.openaiApiKey || ""),
+  };
+}
+
+function buildProjectDocumentation(project) {
+  if (!project.tables.length) {
+    return {
+      documentation: "Sin tablas internas registradas.",
+      rules: "Sin reglas documentadas.",
+    };
+  }
+
+  const documentation = project.tables
+    .map((table) => {
+      const fieldNames = ["id", ...table.fields.map((field) => field.name), "createdAt"];
+      const base = `Tabla ${table.name}(${fieldNames.join(", ")}).`;
+      return table.description ? `${base} ${table.description}` : base;
+    })
+    .join(" ");
+
+  const rules = project.tables
+    .map((table) => (table.rules ? `${table.name}: ${table.rules}` : ""))
+    .filter(Boolean)
+    .join(" ");
+
+  return {
+    documentation,
+    rules: rules || "Sin reglas documentadas.",
+  };
+}
+
+function normalizeProjectMysql(mysqlInput, previous = {}) {
+  const input = mysqlInput || {};
+  const host = String(input.host ?? previous.host ?? "").trim();
+  const portRaw = input.port ?? previous.port ?? 3306;
+  const port = Number(portRaw || 3306);
+  const user = String(input.user ?? input.username ?? previous.user ?? "").trim();
+  const password = String(
+    input.password === "" && previous.password ? previous.password : input.password ?? previous.password ?? "",
+  );
+  const database = String(input.database ?? input.databaseName ?? previous.database ?? "").trim();
+
+  return {
+    host,
+    port: Number.isFinite(port) && port > 0 ? port : 3306,
+    user,
+    password,
+    database,
+  };
+}
+
+function normalizeTool(input) {
+  const method = String(input.method || "POST").toUpperCase();
+  const name = slug(input.name, "tool");
+  return {
+    id: input.id || `tool_${randomUUID()}`,
+    source: input.source || "manual",
+    generated: Boolean(input.generated || (input.source === "internal" && /^(crear_|listar_)/.test(name))),
+    locked: Boolean(input.locked),
+    tableName: input.tableName || "",
+    name,
+    title: input.title || input.name,
+    description: input.description || "",
+    method,
+    url: input.url ? assertUrl(input.url) : "",
+    headers: json(input.headers, {}),
+    bodyTemplate: json(input.bodyTemplate, undefined),
+    readOnly: input.readOnly !== undefined ? Boolean(input.readOnly) : ["GET", "HEAD"].includes(method),
+    inputSchema: normalizeSchema(input.inputSchema),
+    outputSchema: input.outputSchema ? json(input.outputSchema, {}) : undefined,
+    outputExample: input.outputExample ? String(input.outputExample) : "",
+  };
+}
+
+function normalizeDatabase(input, previous = {}) {
+  const name = slug(input.name, "base");
+  const mysqlConfig = normalizeProjectMysql(input.mysql || input, previous.mysql);
+  const sqlApiUrl = input.sqlApiUrl ? assertUrl(input.sqlApiUrl) : previous.sqlApiUrl || "";
+  const requestedMode = String(input.mode || previous.mode || "").trim().toLowerCase();
+  const hasMysql = Boolean(mysqlConfig.host || mysqlConfig.user || mysqlConfig.database);
+  const mode = requestedMode || (
+    input.source === "internal"
+      ? "internal"
+      : sqlApiUrl
+        ? "http"
+        : hasMysql
+          ? "mysql"
+          : "docs"
+  );
+
+  if (mode === "http" && !sqlApiUrl) {
+    throw new Error("Agrega la URL del endpoint SQL si eliges modo HTTP.");
+  }
+
+  if (mode === "mysql") {
+    if (!mysqlConfig.host || !mysqlConfig.user || !mysqlConfig.database) {
+      throw new Error("Para MySQL necesitas host, usuario y base de datos.");
+    }
+  }
+
+  return {
+    id: input.id || previous.id || `db_${randomUUID()}`,
+    source: input.source || previous.source || "manual",
+    generated: Boolean(
+      input.generated
+      || previous.generated
+      || ((input.source || previous.source) === "internal" && name === "workspace_interna"),
+    ),
+    locked: Boolean(input.locked || previous.locked),
+    name,
+    title: input.title || previous.title || input.name || name,
+    toolName: slug(input.toolName || previous.toolName || `consulta_${name}`, "consulta"),
+    mode,
+    sqlApiUrl,
+    documentation: input.documentation || previous.documentation || "",
+    rules: input.rules || previous.rules || "",
+    mysql: mysqlConfig,
+  };
+}
+
+function normalizeTable(input) {
+  const fields = normalizeFields(input.fields);
+  return {
+    id: input.id || `tbl_${randomUUID()}`,
+    name: slug(input.name, "tabla"),
+    title: input.title || input.name || "Tabla",
+    description: input.description || "",
+    rules: input.rules || "",
+    fields,
+    rows: Array.isArray(input.rows) ? input.rows : [],
+    createdAt: input.createdAt || new Date().toISOString(),
+    updatedAt: input.updatedAt || new Date().toISOString(),
+  };
+}
+
+function resolveToolUrl(user, project, tool, baseUrl) {
+  if (tool.source !== "internal" || !tool.tableName) return tool.url;
+  return `${baseUrl}/workspace-api/${user.workspaceKey}/${project.key}/tables/${tool.tableName}/rows`;
+}
+
+function resolveDatabaseUrl(user, project, database, baseUrl) {
+  if (database.mode === "internal") {
+    return `${baseUrl}/workspace-api/${user.workspaceKey}/${project.key}/sql`;
+  }
+  return database.sqlApiUrl || "";
+}
+
+function decorateTool(user, project, tool, baseUrl) {
+  return {
+    ...clone(tool),
+    url: resolveToolUrl(user, project, tool, baseUrl),
+  };
+}
+
+function decorateDatabase(user, project, database, baseUrl) {
+  return {
+    ...clone(database),
+    sqlApiUrl: resolveDatabaseUrl(user, project, database, baseUrl),
+    mysql: {
+      ...clone(database.mysql || {}),
+      password: "",
+      passwordSaved: Boolean(database.mysql?.password),
+      passwordPreview: database.mysql?.password ? "••••••••" : "",
+    },
+  };
+}
+
+function projectSummary(user, project, baseUrl) {
+  return {
+    id: project.id,
+    key: project.key,
+    name: project.name,
+    title: project.title,
+    description: project.description,
+    context: project.context,
+    apiBaseUrl: project.apiBaseUrl || "",
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    counts: {
+      tools: project.tools.length,
+      databases: project.databases.length,
+      tables: project.tables.length,
+      rows: project.tables.reduce((sum, table) => sum + (table.rows?.length || 0), 0),
+    },
+    mcpUrl: `${baseUrl}/mcp/${user.workspaceKey}/${project.key}`,
+  };
+}
+
+function schemaFields(schema = {}) {
+  return Object.keys(schema.properties || {});
+}
+
+function projectGuide(user, project, options = {}) {
+  const intent = String(options.intent || "").trim().toLowerCase();
+  const question = String(options.question || "").trim();
+  const terms = question
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+  const actionTools = project.tools
+    .filter((tool) => !tool.readOnly)
+    .map((tool) => ({
+      name: tool.name,
+      title: tool.title || tool.name,
+      description: tool.description || "",
+      requiredFields: tool.inputSchema?.required || [],
+      acceptedFields: schemaFields(tool.inputSchema),
+      outputExample: tool.outputExample || "",
+    }));
+
+  const readTools = project.tools
+    .filter((tool) => tool.readOnly)
+    .map((tool) => ({
+      name: tool.name,
+      title: tool.title || tool.name,
+      description: tool.description || "",
+      acceptedFields: schemaFields(tool.inputSchema),
+      outputExample: tool.outputExample || "",
+    }));
+
+  const databases = project.databases.map((database) => ({
+    name: database.toolName,
+    title: database.title || database.name,
+    mode: database.mode,
+    description: database.documentation || "",
+    rules: database.rules || "",
+    canVisualize: true,
+    supportsSql: ["internal", "mysql", "http"].includes(database.mode),
+  }));
+
+  const tables = project.tables.map((table) => ({
+    name: table.name,
+    title: table.title,
+    fields: table.fields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      type: field.type,
+      required: field.required,
+    })),
+    rules: table.rules || "",
+  }));
+
+  const catalog = [
+    ...actionTools.map((item) => ({ type: "action", ...item })),
+    ...readTools.map((item) => ({ type: "read", ...item })),
+    ...databases.map((item) => ({ type: "database", ...item })),
+    ...tables.map((item) => ({ type: "table", ...item })),
+  ];
+
+  const matches = terms.length
+    ? catalog
+      .map((item) => {
+        const source = JSON.stringify(item).toLowerCase();
+        const score = terms.reduce((sum, term) => sum + (source.includes(term) ? 1 : 0), 0);
+        return { item, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6)
+      .map((entry) => entry.item)
+    : [];
+
+  const recommendedTools = (
+    intent === "accion"
+      ? actionTools
+      : intent === "visualizacion" || intent === "consulta"
+        ? [...readTools, ...databases]
+        : [...actionTools, ...readTools, ...databases]
+  ).slice(0, 8);
+
+  return {
+    ok: true,
+    intent: intent || "general",
+    question,
+    project: {
+      workspaceKey: user.workspaceKey,
+      projectKey: project.key,
+      title: project.title,
+      description: project.description,
+      context: project.context,
+      apiBaseUrl: project.apiBaseUrl || "",
+    },
+    howToRespond: {
+      action:
+        "Si el usuario quiere realizar una accion, usa una tool de escritura. Si faltan datos requeridos, pidelos. Si la accion cambia datos importantes, confirma antes de ejecutar.",
+      visualization:
+        "Si el usuario quiere visualizar o revisar informacion, usa tools read-only o una base con SQL SELECT/WITH y luego resume el resultado en lista, tabla corta o conteos claros.",
+      query:
+        "Si el usuario hace una pregunta de negocio como cuantas polizas hay, usa una tool de base o lectura y responde con el dato exacto.",
+      missingData:
+        "Nunca inventes campos, IDs o parametros. Pide solamente los datos faltantes.",
+    },
+    availableActions: actionTools,
+    availableReadTools: readTools,
+    availableDatabases: databases,
+    internalTables: tables,
+    recommendedTools,
+    bestMatches: matches,
+    examplePrompts: [
+      "agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998",
+      "cuantas polizas tiene el sistema",
+      "muestrame las polizas vigentes",
+      "que acciones puedes hacer dentro de este proyecto",
+    ],
+  };
+}
+
+function createEmptyProject(seed = {}) {
+  return {
+    id: seed.id || `prj_${randomUUID()}`,
+    key: String(seed.key || randomBytes(8).toString("hex")),
+    name: slug(seed.name || seed.title || "proyecto_principal", "proyecto_principal"),
+    title: String(seed.title || seed.name || "Proyecto principal"),
+    description: String(seed.description || ""),
+    context: String(seed.context || ""),
+    apiBaseUrl: seed.apiBaseUrl ? assertUrl(seed.apiBaseUrl) : "",
+    tools: [],
+    databases: [],
+    tables: [],
+    createdAt: seed.createdAt || new Date().toISOString(),
+    updatedAt: seed.updatedAt || new Date().toISOString(),
+  };
+}
+
+function syncTableTools(project, table) {
+  const names = new Set([`crear_${table.name}`, `listar_${table.name}`]);
+  const existingCreate = project.tools.find((tool) => tool.generated && tool.name === `crear_${table.name}`);
+  const existingList = project.tools.find((tool) => tool.generated && tool.name === `listar_${table.name}`);
+  project.tools = project.tools.filter((tool) => !(tool.generated && names.has(tool.name)));
+
+  project.tools.push({
+    id: existingCreate?.id || `tool_${randomUUID()}`,
+    source: "internal",
+    generated: true,
+    locked: false,
+    tableName: table.name,
+    name: `crear_${table.name}`,
+    title: `Crear ${table.title || table.name}`,
+    description:
+      table.description ||
+      `Crea un nuevo registro en la tabla ${table.title || table.name}. Usa esta tool cuando pidan dar de alta un elemento.`,
+    method: "POST",
+    headers: {},
+    readOnly: false,
+    inputSchema: schemaFromFields(table.fields),
+    outputExample: "{ ok: true, row: { ... } }",
+  });
+
+  project.tools.push({
+    id: existingList?.id || `tool_${randomUUID()}`,
+    source: "internal",
+    generated: true,
+    locked: false,
+    tableName: table.name,
+    name: `listar_${table.name}`,
+    title: `Listar ${table.title || table.name}`,
+    description: `Consulta los registros actuales de la tabla ${table.title || table.name}.`,
+    method: "GET",
+    headers: {},
+    readOnly: true,
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    outputExample: "{ ok: true, rows: [...] }",
+  });
+}
+
+function syncWorkspaceDatabase(project) {
+  const info = buildProjectDocumentation(project);
+  const existing = project.databases.find(
+    (database) => database.generated && database.name === "workspace_interna",
+  );
+  project.databases = project.databases.filter(
+    (database) => !(database.generated && database.name === "workspace_interna"),
+  );
+
+  if (!project.tables.length) return;
+
+  project.databases.push({
+    id: existing?.id || `db_${randomUUID()}`,
+    source: "internal",
+    generated: true,
+    locked: true,
+    name: "workspace_interna",
+    title: "Base interna",
+    toolName: "consultaBaseInterna",
+    mode: "internal",
+    sqlApiUrl: "",
+    documentation: info.documentation,
+    rules: info.rules,
+    mysql: { host: "", port: 3306, user: "", password: "", database: "" },
+  });
+}
+
+function syncProjectArtifacts(project) {
+  project.tools = Array.isArray(project.tools) ? project.tools.map(normalizeTool) : [];
+  project.databases = Array.isArray(project.databases) ? project.databases.map((db) => normalizeDatabase(db)) : [];
+  project.tables = Array.isArray(project.tables) ? project.tables.map(normalizeTable) : [];
+
+  project.tools = project.tools.filter((tool) => !tool.generated);
+  project.databases = project.databases.filter((database) => !database.generated);
+
+  for (const table of project.tables) syncTableTools(project, table);
+  syncWorkspaceDatabase(project);
+  project.updatedAt = project.updatedAt || new Date().toISOString();
+  return project;
+}
+
+function legacyProjectFromUser(user) {
+  const project = createEmptyProject({
+    key: randomBytes(8).toString("hex"),
+    name: "proyecto_principal",
+    title: "Proyecto principal",
+    description: "Migrado desde el workspace unico anterior.",
+  });
+  project.tools = Array.isArray(user.tools) ? user.tools : [];
+  project.databases = Array.isArray(user.databases) ? user.databases : [];
+  project.tables = Array.isArray(user.tables) ? user.tables : [];
+  return syncProjectArtifacts(project);
+}
+
+function normalizeProject(project) {
+  const normalized = createEmptyProject(project);
+  normalized.context = String(project.context || "");
+  normalized.tools = Array.isArray(project.tools) ? project.tools : [];
+  normalized.databases = Array.isArray(project.databases) ? project.databases : [];
+  normalized.tables = Array.isArray(project.tables) ? project.tables : [];
+  return syncProjectArtifacts(normalized);
 }
 
 function normalizeUser(user) {
+  const rawProjects = Array.isArray(user.projects) && user.projects.length
+    ? user.projects
+    : [legacyProjectFromUser(user)];
+  const projects = rawProjects.map(normalizeProject);
+  const activeProjectId = projects.some((project) => project.id === user.activeProjectId)
+    ? user.activeProjectId
+    : projects[0]?.id || "";
+
   return {
     id: user.id || `usr_${randomUUID()}`,
     name: String(user.name || "Desarrollador"),
@@ -165,16 +615,15 @@ function normalizeUser(user) {
       openaiApiKey: String(user.settings?.openaiApiKey || ""),
       openaiModel: String(user.settings?.openaiModel || defaultModel),
     },
-    tools: Array.isArray(user.tools) ? user.tools : [],
-    databases: Array.isArray(user.databases) ? user.databases : [],
-    tables: Array.isArray(user.tables) ? user.tables : [],
+    activeProjectId,
+    projects,
   };
 }
 
 function normalizeData(raw) {
   if (raw && Array.isArray(raw.users)) {
     return {
-      version: 2,
+      version: 3,
       users: raw.users.map(normalizeUser),
       sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
     };
@@ -198,132 +647,65 @@ function writeData(data) {
   fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
 }
 
-function aiStatusFromUser(user) {
-  return {
-    configured: Boolean(user.settings?.openaiApiKey),
-    model: user.settings?.openaiModel || defaultModel,
-    keyPreview: keyPreview(user.settings?.openaiApiKey || ""),
-  };
+function ensureUser(data, userId) {
+  const user = data.users.find((item) => item.id === userId);
+  if (!user) throw new Error("Usuario no encontrado.");
+  user.settings ||= { openaiApiKey: "", openaiModel: defaultModel };
+  user.projects ||= [normalizeProject(createEmptyProject())];
+  user.activeProjectId ||= user.projects[0]?.id || "";
+  return user;
 }
 
-function buildWorkspaceDocumentation(user) {
-  if (!user.tables.length) {
-    return {
-      documentation: "Sin tablas internas registradas.",
-      rules: "Sin reglas documentadas.",
-    };
+function getProjectById(user, projectId) {
+  return user.projects.find((project) => project.id === projectId) || null;
+}
+
+function getProjectByKey(user, projectKey) {
+  return user.projects.find((project) => project.key === projectKey) || null;
+}
+
+function getActiveProject(user) {
+  return getProjectById(user, user.activeProjectId) || user.projects[0] || null;
+}
+
+function ensureProject(user, projectId = "") {
+  const project = projectId ? getProjectById(user, projectId) : getActiveProject(user);
+  if (!project) throw new Error("Proyecto no encontrado.");
+  return project;
+}
+
+function ensureWorkspaceProject(data, workspaceKey, projectKey = "") {
+  const user = data.users.find((item) => item.workspaceKey === workspaceKey);
+  if (!user) throw new Error("Workspace no encontrado.");
+  const project = projectKey ? getProjectByKey(user, projectKey) : getActiveProject(user);
+  if (!project) throw new Error("Proyecto no encontrado.");
+  return { user, project };
+}
+
+function resolvePublishedProject(data) {
+  const workspaceKey = String(process.env.PUBLIC_MCP_WORKSPACE_KEY || "").trim();
+  const projectKey = String(process.env.PUBLIC_MCP_PROJECT_KEY || "").trim();
+
+  if (workspaceKey) {
+    return ensureWorkspaceProject(data, workspaceKey, projectKey);
   }
 
-  const documentation = user.tables
-    .map((table) => {
-      const fieldNames = ["id", ...table.fields.map((field) => field.name), "createdAt"];
-      const base = `Tabla ${table.name}(${fieldNames.join(", ")}).`;
-      return table.description ? `${base} ${table.description}` : base;
-    })
-    .join(" ");
+  if (data.users.length === 1) {
+    const user = ensureUser(data, data.users[0].id);
+    const project = projectKey ? getProjectByKey(user, projectKey) : getActiveProject(user);
+    if (!project) throw new Error("Proyecto no encontrado.");
+    return { user, project };
+  }
 
-  const rules = user.tables
-    .map((table) => (table.rules ? `${table.name}: ${table.rules}` : ""))
-    .filter(Boolean)
-    .join(" ");
-
-  return {
-    documentation,
-    rules: rules || "Sin reglas documentadas.",
-  };
-}
-
-function syncWorkspaceDatabase(user, baseUrl) {
-  const workspaceDbName = "workspace_interna";
-  const info = buildWorkspaceDocumentation(user);
-  user.databases = user.databases.filter(
-    (database) => !(database.source === "internal" && database.name === workspaceDbName),
+  const onlyProjects = data.users.flatMap((user) =>
+    (user.projects || []).map((project) => ({ user, project })),
   );
 
-  if (!user.tables.length) return;
+  if (onlyProjects.length === 1) return onlyProjects[0];
 
-  user.databases.push({
-    id: `db_${workspaceDbName}`,
-    source: "internal",
-    locked: true,
-    name: workspaceDbName,
-    title: "Base interna",
-    toolName: "consultaBaseInterna",
-    sqlApiUrl: `${baseUrl}/workspace-api/${user.workspaceKey}/sql`,
-    documentation: info.documentation,
-    rules: info.rules,
-  });
-}
-
-function syncTableTools(user, table, baseUrl) {
-  const names = new Set([`crear_${table.name}`, `listar_${table.name}`]);
-  user.tools = user.tools.filter((tool) => !(tool.source === "internal" && names.has(tool.name)));
-
-  user.tools.push({
-    id: `tool_${randomUUID()}`,
-    source: "internal",
-    tableName: table.name,
-    name: `crear_${table.name}`,
-    title: `Crear ${table.title || table.name}`,
-    description:
-      table.description ||
-      `Crea un nuevo registro en la tabla ${table.title || table.name}. Usa esta tool cuando pidan dar de alta un elemento.`,
-    method: "POST",
-    url: `${baseUrl}/workspace-api/${user.workspaceKey}/tables/${table.name}/rows`,
-    headers: {},
-    readOnly: false,
-    inputSchema: schemaFromFields(table.fields),
-  });
-
-  user.tools.push({
-    id: `tool_${randomUUID()}`,
-    source: "internal",
-    tableName: table.name,
-    name: `listar_${table.name}`,
-    title: `Listar ${table.title || table.name}`,
-    description: `Consulta los registros actuales de la tabla ${table.title || table.name}.`,
-    method: "GET",
-    url: `${baseUrl}/workspace-api/${user.workspaceKey}/tables/${table.name}/rows`,
-    headers: {},
-    readOnly: true,
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-  });
-}
-
-function normalizeTool(input) {
-  return {
-    id: input.id || `tool_${randomUUID()}`,
-    source: input.source || "manual",
-    tableName: input.tableName || "",
-    name: slug(input.name, "tool"),
-    title: input.title || input.name,
-    description: input.description || "",
-    method: String(input.method || "POST").toUpperCase(),
-    url: assertUrl(input.url),
-    headers: json(input.headers, {}),
-    bodyTemplate: json(input.bodyTemplate, undefined),
-    readOnly: Boolean(input.readOnly),
-    inputSchema: normalizeSchema(input.inputSchema),
-  };
-}
-
-function normalizeDatabase(input) {
-  const name = slug(input.name, "base");
-  return {
-    id: input.id || `db_${randomUUID()}`,
-    source: input.source || "manual",
-    locked: Boolean(input.locked),
-    name,
-    title: input.title || input.name || name,
-    toolName: slug(input.toolName || `consulta_${name}`, "consulta"),
-    sqlApiUrl: input.sqlApiUrl ? assertUrl(input.sqlApiUrl) : "",
-    documentation: input.documentation || "",
-    rules: input.rules || "",
-  };
+  throw new Error(
+    "No pude decidir que proyecto publicar en /mcp. Configura PUBLIC_MCP_WORKSPACE_KEY y PUBLIC_MCP_PROJECT_KEY.",
+  );
 }
 
 function normalizeValue(field, value) {
@@ -354,14 +736,14 @@ function normalizeValue(field, value) {
   return text;
 }
 
-function findTable(user, tableName) {
-  const table = user.tables.find((item) => item.name === slug(tableName, tableName));
+function findTable(project, tableName) {
+  const table = project.tables.find((item) => item.name === slug(tableName, tableName));
   if (!table) throw new Error(`Tabla no encontrada: ${tableName}`);
   return table;
 }
 
-function insertRow(user, tableName, input) {
-  const table = findTable(user, tableName);
+function insertRow(project, tableName, input) {
+  const table = findTable(project, tableName);
   const row = {
     id: `${table.name}_${Date.now()}`,
     createdAt: new Date().toISOString(),
@@ -377,8 +759,8 @@ function insertRow(user, tableName, input) {
   return row;
 }
 
-function listRows(user, tableName) {
-  const table = findTable(user, tableName);
+function listRows(project, tableName) {
+  const table = findTable(project, tableName);
   return {
     table: table.name,
     title: table.title,
@@ -394,15 +776,8 @@ function parseSqlValue(raw) {
   return raw;
 }
 
-function runInternalSql(user, sql) {
-  const text = String(sql || "").trim().replace(/\s+/g, " ");
-  if (!/^(select|with)\b/i.test(text)) {
-    throw new Error("Solo se permite SQL de lectura: SELECT/WITH.");
-  }
-  if (/(insert|update|delete|drop|alter|truncate|create|grant|revoke)\b/i.test(text)) {
-    throw new Error("SQL bloqueado por seguridad.");
-  }
-
+function runInternalSql(project, sql) {
+  const text = ensureReadOnlySql(sql).replace(/\s+/g, " ");
   const match = text.match(
     /^select\s+(.+?)\s+from\s+([a-zA-Z0-9_]+)(?:\s+where\s+([a-zA-Z0-9_]+)\s*=\s*(.+?))?(?:\s+limit\s+(\d+))?\s*;?$/i,
   );
@@ -412,7 +787,7 @@ function runInternalSql(user, sql) {
   }
 
   const [, columnsRaw, tableName, whereField, whereValueRaw, limitRaw] = match;
-  const table = findTable(user, tableName);
+  const table = findTable(project, tableName);
   let rows = clone(table.rows || []);
 
   if (whereField) {
@@ -443,6 +818,31 @@ function runInternalSql(user, sql) {
   };
 }
 
+async function runMysqlReadOnly(database, sql) {
+  const text = ensureReadOnlySql(sql);
+  const connection = await mysql.createConnection({
+    host: database.mysql.host,
+    port: database.mysql.port,
+    user: database.mysql.user,
+    password: database.mysql.password,
+    database: database.mysql.database,
+    connectTimeout: 5000,
+  });
+
+  try {
+    const [rows] = await connection.query(text);
+    const plainRows = clone(rows);
+    return {
+      ok: true,
+      sql: text,
+      count: Array.isArray(plainRows) ? plainRows.length : 0,
+      rows: plainRows,
+    };
+  } finally {
+    await connection.end();
+  }
+}
+
 function parseSimpleCustomerCommand(text) {
   if (!/\bagrega\b/i.test(text) && !/\bcrea\b/i.test(text) && !/\bregistra\b/i.test(text)) return null;
   if (!/\bcliente\b/i.test(text) && !/\bpersona\b/i.test(text)) return null;
@@ -464,6 +864,42 @@ function parseSimpleCustomerCommand(text) {
 
   if (!nombre) return null;
   return { nombre, email, telefono: phone };
+}
+
+async function runExternalSql(database, sql) {
+  const text = ensureReadOnlySql(sql);
+  const response = await fetch(database.sqlApiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sql: text }),
+  });
+
+  const payload = await response.text();
+  let data = null;
+  try {
+    data = payload ? JSON.parse(payload) : null;
+  } catch {
+    data = { raw: payload };
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    sql: text,
+    result: data,
+  };
+}
+
+function buildOperationDocs(database, args = {}) {
+  return {
+    ok: true,
+    executed: false,
+    mode: database.mode,
+    documentation: database.documentation,
+    rules: database.rules,
+    question: args.question || "",
+    note: "No se ejecuto SQL. Agrega sql o configura una conexion activa.",
+  };
 }
 
 export function createStore() {
@@ -491,12 +927,15 @@ export function createStore() {
         }
 
         const { salt, hash } = hashPassword(password);
+        const project = normalizeProject(createEmptyProject());
         const user = normalizeUser({
           id: `usr_${randomUUID()}`,
           name,
           email,
           passwordSalt: salt,
           passwordHash: hash,
+          projects: [project],
+          activeProjectId: project.id,
         });
         data.users.push(user);
 
@@ -546,6 +985,16 @@ export function createStore() {
       return data.users.find((user) => user.workspaceKey === workspaceKey) || null;
     },
 
+    getWorkspaceProject(workspaceKey, projectKey = "") {
+      const data = readData();
+      return ensureWorkspaceProject(data, workspaceKey, projectKey);
+    },
+
+    getPublishedProject() {
+      const data = readData();
+      return resolvePublishedProject(data);
+    },
+
     getSettings(userId) {
       const data = readData();
       const user = ensureUser(data, userId);
@@ -555,25 +1004,44 @@ export function createStore() {
     getState(userId, baseUrl) {
       const data = readData();
       const user = ensureUser(data, userId);
+      const project = ensureProject(user);
+
       return {
         user: sanitizeUser(user),
-        tools: clone(user.tools),
-        databases: clone(user.databases),
-        tables: clone(user.tables),
+        projects: user.projects.map((item) => projectSummary(user, item, baseUrl)),
+        project: projectSummary(user, project, baseUrl),
+        tools: project.tools.map((tool) => decorateTool(user, project, tool, baseUrl)),
+        databases: project.databases.map((database) => decorateDatabase(user, project, database, baseUrl)),
+        tables: clone(project.tables),
         ai: aiStatusFromUser(user),
-        mcpUrl: `${baseUrl}/mcp/${user.workspaceKey}`,
+        mcpUrl: `${baseUrl}/mcp/${user.workspaceKey}/${project.key}`,
+        legacyMcpUrl: `${baseUrl}/mcp/${user.workspaceKey}`,
         chatGptReady: baseUrl.startsWith("https://"),
       };
     },
 
-    getTools(userId) {
+    getProjectGuide(userId, projectKey = "", options = {}) {
       const data = readData();
-      return clone(ensureUser(data, userId).tools);
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      return projectGuide(user, project, options);
     },
 
-    getDatabases(userId) {
+    getTools(userId, projectKey = "") {
       const data = readData();
-      return clone(ensureUser(data, userId).databases);
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      return clone(project.tools);
+    },
+
+    getDatabases(userId, projectKey = "") {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      return clone(project.databases);
     },
 
     saveSettings(userId, input) {
@@ -589,12 +1057,68 @@ export function createStore() {
       });
     },
 
+    saveProject(userId, input) {
+      return mutate((data) => {
+        const user = ensureUser(data, userId);
+        const title = String(input.title || input.name || "").trim();
+        if (title.length < 2) throw new Error("Escribe el nombre del proyecto.");
+
+        const existing = input.id ? getProjectById(user, input.id) : null;
+        if (existing) {
+          existing.name = slug(input.name || title, existing.name || "proyecto");
+          existing.title = title;
+          existing.description = String(input.description || "");
+          existing.context = String(input.context || "");
+          existing.apiBaseUrl = input.apiBaseUrl ? assertUrl(input.apiBaseUrl) : "";
+          existing.updatedAt = new Date().toISOString();
+          user.activeProjectId = existing.id;
+          return projectSummary(user, existing, input.baseUrl || "http://localhost");
+        }
+
+        const project = normalizeProject(createEmptyProject({
+          name: input.name || title,
+          title,
+          description: input.description || "",
+          context: input.context || "",
+          apiBaseUrl: input.apiBaseUrl || "",
+        }));
+        user.projects.push(project);
+        user.activeProjectId = project.id;
+        return project;
+      });
+    },
+
+    selectProject(userId, projectId) {
+      return mutate((data) => {
+        const user = ensureUser(data, userId);
+        const project = getProjectById(user, projectId);
+        if (!project) throw new Error("Proyecto no encontrado.");
+        user.activeProjectId = project.id;
+        return sanitizeUser(user);
+      });
+    },
+
+    deleteProject(userId, projectId) {
+      mutate((data) => {
+        const user = ensureUser(data, userId);
+        if (user.projects.length <= 1) {
+          throw new Error("Debes conservar al menos un proyecto.");
+        }
+        user.projects = user.projects.filter((project) => project.id !== projectId);
+        if (!user.projects.some((project) => project.id === user.activeProjectId)) {
+          user.activeProjectId = user.projects[0]?.id || "";
+        }
+      });
+    },
+
     saveTool(userId, input) {
       return mutate((data) => {
         const user = ensureUser(data, userId);
+        const project = ensureProject(user);
         const tool = normalizeTool(input);
-        user.tools = user.tools.filter((item) => item.name !== tool.name);
-        user.tools.push(tool);
+        project.tools = project.tools.filter((item) => item.name !== tool.name);
+        project.tools.push(tool);
+        project.updatedAt = new Date().toISOString();
         return tool;
       });
     },
@@ -602,16 +1126,21 @@ export function createStore() {
     deleteTool(userId, name) {
       mutate((data) => {
         const user = ensureUser(data, userId);
-        user.tools = user.tools.filter((tool) => tool.name !== name || tool.locked);
+        const project = ensureProject(user);
+        project.tools = project.tools.filter((tool) => tool.name !== name || tool.locked);
+        project.updatedAt = new Date().toISOString();
       });
     },
 
     saveDatabase(userId, input) {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        const database = normalizeDatabase(input);
-        user.databases = user.databases.filter((item) => item.name !== database.name);
-        user.databases.push(database);
+        const project = ensureProject(user);
+        const previous = project.databases.find((item) => item.name === slug(input.name, "base"));
+        const database = normalizeDatabase(input, previous);
+        project.databases = project.databases.filter((item) => item.name !== database.name);
+        project.databases.push(database);
+        project.updatedAt = new Date().toISOString();
         return database;
       });
     },
@@ -619,121 +1148,123 @@ export function createStore() {
     deleteDatabase(userId, name) {
       mutate((data) => {
         const user = ensureUser(data, userId);
-        user.databases = user.databases.filter(
+        const project = ensureProject(user);
+        project.databases = project.databases.filter(
           (database) => database.name !== name || database.locked,
         );
+        project.updatedAt = new Date().toISOString();
       });
     },
 
-    saveTable(userId, input, baseUrl) {
+    saveTable(userId, input) {
       return mutate((data) => {
         const user = ensureUser(data, userId);
+        const project = ensureProject(user);
         const name = slug(input.name, "tabla");
-        const fields = normalizeFields(input.fields);
-        const previous = user.tables.find((item) => item.name === name);
-        const table = {
-          id: previous?.id || `tbl_${randomUUID()}`,
-          name,
-          title: input.title || input.name || name,
-          description: input.description || "",
-          rules: input.rules || "",
-          fields,
+        const previous = project.tables.find((item) => item.name === name);
+        const table = normalizeTable({
+          ...input,
+          id: previous?.id,
+          createdAt: previous?.createdAt,
           rows: previous?.rows || [],
-          createdAt: previous?.createdAt || new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        user.tables = user.tables.filter((item) => item.name !== name);
-        user.tables.push(table);
-        syncTableTools(user, table, baseUrl);
-        syncWorkspaceDatabase(user, baseUrl);
+        });
+        project.tables = project.tables.filter((item) => item.name !== name);
+        project.tables.push(table);
+        syncProjectArtifacts(project);
+        project.updatedAt = new Date().toISOString();
         return table;
       });
     },
 
-    deleteTable(userId, name, baseUrl) {
+    deleteTable(userId, name) {
       mutate((data) => {
         const user = ensureUser(data, userId);
+        const project = ensureProject(user);
         const tableName = slug(name, name);
-        user.tables = user.tables.filter((table) => table.name !== tableName);
-        user.tools = user.tools.filter(
-          (tool) => !(tool.source === "internal" && tool.tableName === tableName),
-        );
-        syncWorkspaceDatabase(user, baseUrl);
+        project.tables = project.tables.filter((table) => table.name !== tableName);
+        syncProjectArtifacts(project);
+        project.updatedAt = new Date().toISOString();
       });
     },
 
-    seedDemo(userId, baseUrl) {
+    seedDemo(userId) {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        user.tables = [];
-        user.tools = user.tools.filter((tool) => tool.source !== "internal" && !tool.locked);
-        user.databases = user.databases.filter((database) => database.source !== "internal");
+        const project = ensureProject(user);
+        project.tables = [];
+        project.tools = project.tools.filter((tool) => tool.source !== "internal");
+        project.databases = project.databases.filter((database) => database.source !== "internal");
 
-        const clientes = {
-          id: `tbl_${randomUUID()}`,
+        const clientes = normalizeTable({
           name: "clientes",
           title: "Clientes",
-          description: "Clientes del sistema legacy o del portal.",
+          description: "Clientes del sistema conectado.",
           rules: "status = 1 activo, status = -1 inactivo.",
-          fields: normalizeFields([
+          fields: [
             { name: "nombre", label: "Nombre", type: "string", required: true },
             { name: "email", label: "Email", type: "string", required: true },
             { name: "telefono", label: "Telefono", type: "string", required: true },
             { name: "status", label: "Status", type: "number", required: false, defaultValue: 1 },
-          ]),
-          rows: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
+          ],
+        });
 
-        const facturas = {
-          id: `tbl_${randomUUID()}`,
+        const polizas = normalizeTable({
+          name: "polizas",
+          title: "Polizas",
+          description: "Polizas registradas en el sistema.",
+          rules: "status = 1 vigente, status = -1 cancelada.",
+          fields: [
+            { name: "folio", label: "Folio", type: "string", required: true },
+            { name: "cliente", label: "Cliente", type: "string", required: true },
+            { name: "importe", label: "Importe", type: "number", required: true },
+            { name: "status", label: "Status", type: "number", required: false, defaultValue: 1 },
+          ],
+        });
+
+        const facturas = normalizeTable({
           name: "facturas",
           title: "Facturas",
           description: "Facturas emitidas a clientes existentes.",
           rules: "status = 1 emitida, status = -1 cancelada.",
-          fields: normalizeFields([
+          fields: [
             { name: "clienteid", label: "Cliente ID", type: "string", required: true },
             { name: "importe", label: "Importe", type: "number", required: true },
             { name: "concepto", label: "Concepto", type: "string", required: true },
             { name: "status", label: "Status", type: "number", required: false, defaultValue: 1 },
-          ]),
-          rows: [],
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
+          ],
+        });
 
-        user.tables.push(clientes, facturas);
-        syncTableTools(user, clientes, baseUrl);
-        syncTableTools(user, facturas, baseUrl);
+        project.tables.push(clientes, polizas, facturas);
+        syncProjectArtifacts(project);
 
-        user.tools = user.tools.filter((tool) => tool.name !== "agregaCliente" && tool.name !== "emiteFactura");
-        user.tools.push({
+        project.tools = project.tools.filter((tool) => !["agregaCliente", "emiteFactura"].includes(tool.name));
+        project.tools.push({
           id: `tool_${randomUUID()}`,
           source: "internal",
-          tableName: "clientes",
+          generated: false,
           locked: true,
+          tableName: "clientes",
           name: "agregaCliente",
           title: "Agrega cliente",
           description:
             "Da de alta un cliente. Usa esta tool cuando el usuario pida agregar, registrar o crear un cliente.",
           method: "POST",
-          url: `${baseUrl}/workspace-api/${user.workspaceKey}/tables/clientes/rows`,
           headers: {},
           readOnly: false,
           inputSchema: schemaFromFields(clientes.fields),
+          outputExample: "{ ok: true, row: { id, nombre, email, telefono } }",
         });
 
-        user.tools.push({
+        project.tools.push({
           id: `tool_${randomUUID()}`,
           source: "internal",
-          tableName: "facturas",
+          generated: false,
           locked: true,
+          tableName: "facturas",
           name: "emiteFactura",
           title: "Emite factura",
           description: "Emite una factura para un cliente existente.",
           method: "POST",
-          url: `${baseUrl}/workspace-api/${user.workspaceKey}/tables/facturas/rows`,
           headers: {},
           bodyTemplate: {
             clienteid: "{{clienteId}}",
@@ -752,13 +1283,14 @@ export function createStore() {
             required: ["clienteId", "importe", "concepto"],
             additionalProperties: false,
           },
+          outputExample: "{ ok: true, row: { id, clienteid, importe, concepto } }",
         });
 
-        syncWorkspaceDatabase(user, baseUrl);
+        project.updatedAt = new Date().toISOString();
         return {
-          tools: clone(user.tools),
-          databases: clone(user.databases),
-          tables: clone(user.tables),
+          tools: clone(project.tools),
+          databases: clone(project.databases),
+          tables: clone(project.tables),
         };
       });
     },
@@ -766,12 +1298,13 @@ export function createStore() {
     parseSimpleCommand(userId, text) {
       const data = readData();
       const user = ensureUser(data, userId);
+      const project = ensureProject(user);
       const parsed = parseSimpleCustomerCommand(text);
       if (!parsed) return null;
 
-      const toolName = user.tools.find((tool) => tool.name === "agregaCliente")
+      const toolName = project.tools.find((tool) => tool.name === "agregaCliente")
         ? "agregaCliente"
-        : user.tools.find((tool) => tool.name === "crear_clientes")
+        : project.tools.find((tool) => tool.name === "crear_clientes")
           ? "crear_clientes"
           : null;
 
@@ -782,11 +1315,22 @@ export function createStore() {
       };
     },
 
-    async callTool(userId, name, args = {}) {
+    async callTool(userId, name, args = {}, projectKey = "") {
       const data = readData();
       const user = ensureUser(data, userId);
-      const tool = user.tools.find((item) => item.name === name);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      const tool = project.tools.find((item) => item.name === name);
       if (!tool) throw new Error(`Tool no encontrada: ${name}`);
+
+      if (tool.source === "internal" && tool.tableName) {
+        const payload = tool.bodyTemplate ? renderTemplate(tool.bodyTemplate, args) : args;
+        if (tool.readOnly || ["GET", "HEAD"].includes(tool.method || "GET")) {
+          return { ok: true, status: 200, data: this.listWorkspaceRows(user.workspaceKey, project.key, tool.tableName) };
+        }
+        const row = this.insertWorkspaceRow(user.workspaceKey, project.key, tool.tableName, payload);
+        return { ok: true, status: 201, data: { ok: true, row } };
+      }
 
       const method = tool.method || "POST";
       const hasBody = !["GET", "HEAD"].includes(method);
@@ -813,26 +1357,61 @@ export function createStore() {
       return { ok: response.ok, status: response.status, data: output };
     },
 
-    insertWorkspaceRow(workspaceKey, tableName, input) {
+    async callDatabase(userId, name, args = {}, projectKey = "") {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      const database = project.databases.find((item) => item.toolName === name);
+      if (!database) throw new Error(`Base no encontrada: ${name}`);
+
+      const sql = String(args.sql || "").trim();
+      if (!sql) return buildOperationDocs(database, args);
+
+      if (database.mode === "internal") {
+        return this.runWorkspaceSql(user.workspaceKey, project.key, sql);
+      }
+      if (database.mode === "mysql") {
+        return runMysqlReadOnly(database, sql);
+      }
+      if (database.mode === "http") {
+        return runExternalSql(database, sql);
+      }
+
+      return buildOperationDocs(database, args);
+    },
+
+    async callOperation(userId, name, args = {}, projectKey = "") {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+
+      const database = project.databases.find((item) => item.toolName === name);
+      if (database) return this.callDatabase(userId, name, args, project.key);
+
+      return this.callTool(userId, name, args, project.key);
+    },
+
+    insertWorkspaceRow(workspaceKey, projectKey, tableName, input) {
       return mutate((data) => {
-        const user = data.users.find((item) => item.workspaceKey === workspaceKey);
-        if (!user) throw new Error("Workspace no encontrado.");
-        return insertRow(user, tableName, input);
+        const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+        const row = insertRow(project, tableName, input);
+        project.updatedAt = new Date().toISOString();
+        return row;
       });
     },
 
-    listWorkspaceRows(workspaceKey, tableName) {
+    listWorkspaceRows(workspaceKey, projectKey, tableName) {
       const data = readData();
-      const user = data.users.find((item) => item.workspaceKey === workspaceKey);
-      if (!user) throw new Error("Workspace no encontrado.");
-      return listRows(user, tableName);
+      const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+      return listRows(project, tableName);
     },
 
-    runWorkspaceSql(workspaceKey, sql) {
+    runWorkspaceSql(workspaceKey, projectKey, sql) {
       const data = readData();
-      const user = data.users.find((item) => item.workspaceKey === workspaceKey);
-      if (!user) throw new Error("Workspace no encontrado.");
-      return runInternalSql(user, sql);
+      const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+      return runInternalSql(project, sql);
     },
   };
 }

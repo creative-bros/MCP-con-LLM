@@ -4,13 +4,39 @@ function settingsError(message, status = 400) {
   return error;
 }
 
-function getToolDefinitions(store, userId) {
+function apiToolDefinitions(store, userId) {
   return store.getTools(userId).map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
-      description: tool.description || tool.title || tool.name,
+      description: [
+        tool.description || tool.title || tool.name,
+        tool.outputExample ? `Salida esperada: ${tool.outputExample}` : "",
+      ].filter(Boolean).join("\n\n"),
       parameters: tool.inputSchema,
+    },
+  }));
+}
+
+function databaseToolDefinitions(store, userId) {
+  return store.getDatabases(userId).map((database) => ({
+    type: "function",
+    function: {
+      name: database.toolName,
+      description: [
+        `Consulta la base del proyecto "${database.title || database.name}".`,
+        database.documentation ? `Documentacion: ${database.documentation}` : "",
+        database.rules ? `Reglas: ${database.rules}` : "",
+        "Usa SQL read-only. Solo SELECT/WITH.",
+      ].filter(Boolean).join("\n\n"),
+      parameters: {
+        type: "object",
+        properties: {
+          question: { type: "string", description: "Pregunta natural del usuario" },
+          sql: { type: "string", description: "SQL read-only a ejecutar" },
+        },
+        additionalProperties: false,
+      },
     },
   }));
 }
@@ -50,18 +76,23 @@ export async function runAiCommand(store, userId, text) {
     throw settingsError("Primero guarda tu propia OpenAI API key en Configuracion IA.");
   }
 
-  const tools = getToolDefinitions(store, userId);
+  const state = store.getState(userId, "https://portal.local");
+  const tools = [...apiToolDefinitions(store, userId), ...databaseToolDefinitions(store, userId)];
   if (!tools.length) {
-    throw settingsError("Primero registra una tool, crea una tabla o carga la demo.");
+    throw settingsError("Primero registra una tool, una base, crea una tabla o carga la demo.");
   }
 
   const messages = [
     {
       role: "system",
       content:
-        "Eres un asistente operativo conectado a un sistema legacy y a tablas internas. " +
+        `Eres un asistente operativo conectado al proyecto "${state.project?.title || "Proyecto"}". ` +
+        `${state.project?.description || ""} ${state.project?.context || ""}`.trim() +
+        " Clasifica la solicitud del usuario como accion, consulta, visualizacion o ayuda. " +
         "Cuando el usuario pida una accion disponible, llama exactamente la function tool correcta. " +
-        "No inventes datos requeridos; si faltan datos, responde pidiendolos en espanol.",
+        "Si la solicitud implica consultar o visualizar datos del sistema, puedes usar tools de base con SQL read-only o tools read-only. " +
+        "Si faltan datos requeridos, responde pidiendolos en espanol. " +
+        "Si el usuario quiere ver algo, resume el resultado de forma clara y ordenada.",
     },
     { role: "user", content: text },
   ];
@@ -88,7 +119,7 @@ export async function runAiCommand(store, userId, text) {
   for (const call of calls) {
     const name = call.function?.name;
     const args = JSON.parse(call.function?.arguments || "{}");
-    const result = await store.callTool(userId, name, args);
+    const result = await store.callOperation(userId, name, args);
     results.push({ name, arguments: args, result });
     toolMessages.push({
       role: "tool",
@@ -114,6 +145,8 @@ export async function buildTableFromPrompt(store, userId, baseUrl, prompt) {
     throw settingsError("Guarda primero la API key del desarrollador para usar el creador con IA.");
   }
 
+  const state = store.getState(userId, baseUrl || "https://portal.local");
+
   const message = await openAiChat(settings, {
     model: settings.openaiModel,
     messages: [
@@ -121,7 +154,9 @@ export async function buildTableFromPrompt(store, userId, baseUrl, prompt) {
         role: "system",
         content:
           "Convierte la solicitud del desarrollador en una definicion de tabla para un portal MCP. " +
-          "Piensa en una tabla util para altas desde chat. Usa nombres claros, campos concretos y reglas operativas.",
+          `El proyecto actual se llama "${state.project?.title || "Proyecto"}". ` +
+          `${state.project?.description || ""} ${state.project?.context || ""}`.trim() +
+          " Piensa en una tabla util para altas desde chat. Usa nombres claros, campos concretos y reglas operativas.",
       },
       { role: "user", content: prompt },
     ],
@@ -173,7 +208,7 @@ export async function buildTableFromPrompt(store, userId, baseUrl, prompt) {
   }
 
   const definition = JSON.parse(call.function.arguments);
-  const table = store.saveTable(userId, definition, baseUrl);
+  const table = store.saveTable(userId, definition);
   return {
     message: `Tabla ${table.title} creada con ${table.fields.length} campos.`,
     table,

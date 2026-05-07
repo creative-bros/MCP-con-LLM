@@ -1,7 +1,9 @@
 const endpoint = process.argv[2];
 
 if (!endpoint) {
-  throw new Error("Usa: node scripts/check-mcp.js http://127.0.0.1:3000/mcp/TU_WORKSPACE_KEY");
+  throw new Error(
+    "Usa: node scripts/check-mcp.js http://127.0.0.1:3000/mcp o node scripts/check-mcp.js http://127.0.0.1:3000/mcp/TU_WORKSPACE_KEY/TU_PROJECT_KEY",
+  );
 }
 
 async function post(body) {

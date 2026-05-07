@@ -48,22 +48,55 @@ function authRequired(req, res, next) {
   next();
 }
 
-function workspaceOr404(res, workspaceKey) {
-  const user = store.getUserByWorkspaceKey(workspaceKey);
-  if (!user) {
+function workspaceProjectOr404(res, workspaceKey, projectKey = "") {
+  try {
+    return store.getWorkspaceProject(workspaceKey, projectKey);
+  } catch {
     res.status(404).json({ error: "Workspace no encontrado." });
     return null;
   }
-  return user;
+}
+
+function publishedProjectOrError(res) {
+  try {
+    return store.getPublishedProject();
+  } catch (err) {
+    res.status(409).json({
+      error: err.message,
+      hint: "Si quieres usar una sola URL /mcp, deja un solo usuario/proyecto o configura PUBLIC_MCP_WORKSPACE_KEY y PUBLIC_MCP_PROJECT_KEY.",
+    });
+    return null;
+  }
+}
+
+function handleStreamableMcp(req, res) {
+  if (!(req.get("accept") || "").includes("text/event-stream")) return false;
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.write(": MCP stream listo\n\n");
+  const timer = setInterval(() => res.write(": ping\n\n"), 15000);
+  req.on("close", () => clearInterval(timer));
+  return true;
 }
 
 app.get("/health", (req, res) => {
   const data = store.read();
+  let publicMcp = null;
+  try {
+    const target = store.getPublishedProject();
+    publicMcp = `${publicBaseUrl(req)}/mcp`;
+    if (!target?.project?.key) publicMcp = null;
+  } catch {
+    publicMcp = null;
+  }
   res.json({
     ok: true,
     users: data.users.length,
     sessions: data.sessions.length,
-    mcpPattern: `${publicBaseUrl(req)}/mcp/:workspaceKey`,
+    mcpPattern: `${publicBaseUrl(req)}/mcp/:workspaceKey/:projectKey`,
+    publicMcpUrl: publicMcp,
   });
 });
 
@@ -105,12 +138,26 @@ app.get("/api/state", authRequired, (req, res) => {
   res.json(store.getState(req.user.id, publicBaseUrl(req)));
 });
 
+app.post("/api/projects", authRequired, (req, res) => {
+  res.status(201).json(store.saveProject(req.user.id, req.body || {}));
+});
+
+app.post("/api/projects/select", authRequired, (req, res) => {
+  store.selectProject(req.user.id, String(req.body?.projectId || ""));
+  res.status(204).end();
+});
+
+app.delete("/api/projects/:projectId", authRequired, (req, res) => {
+  store.deleteProject(req.user.id, req.params.projectId);
+  res.status(204).end();
+});
+
 app.post("/api/settings", authRequired, (req, res) => {
   res.json(store.saveSettings(req.user.id, req.body || {}));
 });
 
 app.post("/api/demo", authRequired, (req, res) => {
-  const result = store.seedDemo(req.user.id, publicBaseUrl(req));
+  const result = store.seedDemo(req.user.id);
   res.status(201).json(result);
 });
 
@@ -133,11 +180,11 @@ app.delete("/api/databases/:name", authRequired, (req, res) => {
 });
 
 app.post("/api/tables", authRequired, (req, res) => {
-  res.status(201).json(store.saveTable(req.user.id, req.body || {}, publicBaseUrl(req)));
+  res.status(201).json(store.saveTable(req.user.id, req.body || {}));
 });
 
 app.delete("/api/tables/:name", authRequired, (req, res) => {
-  store.deleteTable(req.user.id, req.params.name, publicBaseUrl(req));
+  store.deleteTable(req.user.id, req.params.name);
   res.status(204).end();
 });
 
@@ -187,31 +234,77 @@ app.post("/api/ai-command", authRequired, asyncRoute(async (req, res) => {
 }));
 
 app.get("/workspace-api/:workspaceKey/tables/:tableName/rows", asyncRoute(async (req, res) => {
-  const user = workspaceOr404(res, req.params.workspaceKey);
-  if (!user) return;
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
   res.json({
     ok: true,
-    ...store.listWorkspaceRows(req.params.workspaceKey, req.params.tableName),
+    project: target.project.title,
+    ...store.listWorkspaceRows(req.params.workspaceKey, target.project.key, req.params.tableName),
   });
 }));
 
 app.post("/workspace-api/:workspaceKey/tables/:tableName/rows", asyncRoute(async (req, res) => {
-  const user = workspaceOr404(res, req.params.workspaceKey);
-  if (!user) return;
-  const row = store.insertWorkspaceRow(req.params.workspaceKey, req.params.tableName, req.body || {});
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
+  const row = store.insertWorkspaceRow(
+    req.params.workspaceKey,
+    target.project.key,
+    req.params.tableName,
+    req.body || {},
+  );
   res.status(201).json({ ok: true, row });
 }));
 
 app.post("/workspace-api/:workspaceKey/sql", asyncRoute(async (req, res) => {
-  const user = workspaceOr404(res, req.params.workspaceKey);
-  if (!user) return;
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
   const sql = String(req.body?.sql || "").trim();
   if (!sql) {
     res.status(400).json({ error: "Escribe el SQL." });
     return;
   }
-  res.json(store.runWorkspaceSql(req.params.workspaceKey, sql));
+  res.json(store.runWorkspaceSql(req.params.workspaceKey, target.project.key, sql));
 }));
+
+app.get("/workspace-api/:workspaceKey/:projectKey/tables/:tableName/rows", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+  res.json({
+    ok: true,
+    project: target.project.title,
+    ...store.listWorkspaceRows(req.params.workspaceKey, req.params.projectKey, req.params.tableName),
+  });
+}));
+
+app.post("/workspace-api/:workspaceKey/:projectKey/tables/:tableName/rows", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+  const row = store.insertWorkspaceRow(
+    req.params.workspaceKey,
+    req.params.projectKey,
+    req.params.tableName,
+    req.body || {},
+  );
+  res.status(201).json({ ok: true, row });
+}));
+
+app.post("/workspace-api/:workspaceKey/:projectKey/sql", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+  const sql = String(req.body?.sql || "").trim();
+  if (!sql) {
+    res.status(400).json({ error: "Escribe el SQL." });
+    return;
+  }
+  res.json(store.runWorkspaceSql(req.params.workspaceKey, req.params.projectKey, sql));
+}));
+
+app.options("/mcp", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.status(204).end();
+});
 
 app.options("/mcp/:workspaceKey", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -221,45 +314,108 @@ app.options("/mcp/:workspaceKey", (req, res) => {
 });
 
 app.get("/mcp", (req, res) => {
-  res.json({
-    ok: true,
-    message: "El MCP ahora es por workspace. Inicia sesion y copia tu URL personal.",
-    example: `${publicBaseUrl(req)}/mcp/TU_WORKSPACE_KEY`,
-  });
-});
+  const target = publishedProjectOrError(res);
+  if (!target) return;
 
-app.get("/mcp/:workspaceKey", (req, res) => {
-  const user = workspaceOr404(res, req.params.workspaceKey);
-  if (!user) return;
-
-  if ((req.get("accept") || "").includes("text/event-stream")) {
-    res.status(200);
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.write(": MCP stream listo\n\n");
-    const timer = setInterval(() => res.write(": ping\n\n"), 15000);
-    req.on("close", () => clearInterval(timer));
-    return;
-  }
+  if (handleStreamableMcp(req, res)) return;
 
   res.json({
     ok: true,
-    message: "Este endpoint MCP pertenece a un workspace de desarrollador.",
+    message: "Este endpoint MCP publico apunta al proyecto publicado para ChatGPT.",
+    project: target.project.title,
+    workspaceKey: target.user.workspaceKey,
+    projectKey: target.project.key,
     transport: "Streamable HTTP",
-    tools: listMcpTools(store, user.id).map((tool) => tool.name),
+    tools: listMcpTools(store, target.user.id, target.project.key).map((tool) => tool.name),
   });
 });
 
-app.post("/mcp/:workspaceKey", asyncRoute(async (req, res) => {
-  const user = workspaceOr404(res, req.params.workspaceKey);
-  if (!user) return;
+app.post("/mcp", asyncRoute(async (req, res) => {
+  const target = publishedProjectOrError(res);
+  if (!target) return;
 
   const messages = Array.isArray(req.body) ? req.body : [req.body];
   const replies = [];
 
   for (const message of messages) {
-    const reply = await handleMcpMessage(store, user.id, message);
+    const reply = await handleMcpMessage(store, target.user.id, message, target.project.key);
+    if (reply) replies.push(reply);
+  }
+
+  if (!replies.length) {
+    res.status(204).end();
+    return;
+  }
+
+  res.json(Array.isArray(req.body) ? replies : replies[0]);
+}));
+
+app.get("/mcp/:workspaceKey", (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
+
+  if (handleStreamableMcp(req, res)) return;
+
+  res.json({
+    ok: true,
+    message: "Este endpoint MCP apunta al proyecto activo del desarrollador.",
+    project: target.project.title,
+    transport: "Streamable HTTP",
+    tools: listMcpTools(store, target.user.id, target.project.key).map((tool) => tool.name),
+  });
+});
+
+app.post("/mcp/:workspaceKey", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
+
+  const messages = Array.isArray(req.body) ? req.body : [req.body];
+  const replies = [];
+
+  for (const message of messages) {
+    const reply = await handleMcpMessage(store, target.user.id, message, target.project.key);
+    if (reply) replies.push(reply);
+  }
+
+  if (!replies.length) {
+    res.status(204).end();
+    return;
+  }
+
+  res.json(Array.isArray(req.body) ? replies : replies[0]);
+}));
+
+app.options("/mcp/:workspaceKey/:projectKey", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.status(204).end();
+});
+
+app.get("/mcp/:workspaceKey/:projectKey", (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+
+  if (handleStreamableMcp(req, res)) return;
+
+  res.json({
+    ok: true,
+    message: "Este endpoint MCP pertenece a un proyecto especifico.",
+    project: target.project.title,
+    transport: "Streamable HTTP",
+    tools: listMcpTools(store, target.user.id, target.project.key).map((tool) => tool.name),
+  });
+});
+
+app.post("/mcp/:workspaceKey/:projectKey", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+
+  const messages = Array.isArray(req.body) ? req.body : [req.body];
+  const replies = [];
+
+  for (const message of messages) {
+    const reply = await handleMcpMessage(store, target.user.id, message, target.project.key);
     if (reply) replies.push(reply);
   }
 
@@ -278,5 +434,6 @@ app.use((err, req, res, next) => {
 
 app.listen(port, () => {
   console.log(`Portal: http://localhost:${port}`);
-  console.log(`MCP:    http://localhost:${port}/mcp/:workspaceKey`);
+  console.log(`MCP simple: http://localhost:${port}/mcp`);
+  console.log(`MCP:    http://localhost:${port}/mcp/:workspaceKey/:projectKey`);
 });
