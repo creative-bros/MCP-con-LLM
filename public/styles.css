@@ -784,6 +784,11 @@ details textarea {
   gap: 12px;
 }
 
+.activity-list {
+  display: grid;
+  gap: 10px;
+}
+
 .item,
 .table-card {
   border: 1px solid rgba(37, 49, 60, 0.08);
@@ -800,6 +805,12 @@ details textarea {
 .item p {
   margin: 10px 0;
   line-height: 1.55;
+}
+
+.item small,
+.activity-item small {
+  display: block;
+  line-height: 1.5;
 }
 
 .badge,
@@ -843,6 +854,31 @@ details textarea {
   overflow-x: auto;
 }
 
+.table-card .item-row {
+  gap: 12px;
+}
+
+.table-actions,
+.resource-actions,
+.row-modal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.table-row-actions .ghost,
+.resource-actions .ghost {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -860,6 +896,67 @@ th {
   font-size: 12px;
   color: var(--sage);
   text-transform: uppercase;
+}
+
+.panel-subsection {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(37, 49, 60, 0.08);
+}
+
+.resource-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.resource-kicker {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(200, 111, 74, 0.12);
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.resource-meta {
+  margin-top: 8px;
+}
+
+.activity-item {
+  border: 1px solid rgba(37, 49, 60, 0.08);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.58);
+  padding: 14px;
+}
+
+.activity-item p {
+  margin: 8px 0 10px;
+  color: var(--ink);
+}
+
+.activity-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--sage-soft);
+  color: #4d5f42;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.row-dialog {
+  width: min(620px, 100%);
+}
+
+#resource-preview {
+  min-height: 220px;
 }
 
 .empty-mini {

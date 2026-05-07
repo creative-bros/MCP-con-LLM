@@ -7,10 +7,13 @@ const state = {
   tools: [],
   databases: [],
   tables: [],
+  resources: [],
+  activity: [],
   mcpUrl: "",
   legacyMcpUrl: "",
   ai: null,
   chatGptReady: false,
+  resourceView: null,
 };
 let flashTimer = null;
 let createProjectMode = false;
@@ -44,6 +47,18 @@ function esc(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function friendlyDate(value) {
+  if (!value) return "";
+  try {
+    return new Date(value).toLocaleString("es-MX", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    return String(value);
+  }
 }
 
 async function api(path, options = {}, useAuth = true) {
@@ -93,9 +108,12 @@ function clearSession() {
   state.tools = [];
   state.databases = [];
   state.tables = [];
+  state.resources = [];
+  state.activity = [];
   state.mcpUrl = "";
   state.legacyMcpUrl = "";
   state.ai = null;
+  state.resourceView = null;
   localStorage.removeItem(tokenKey);
 }
 
@@ -226,6 +244,7 @@ function renderProjects() {
           <span class="chip">${project.counts.databases} bases</span>
           <span class="chip">${project.counts.tables} tablas</span>
           <span class="chip">${project.counts.rows} registros</span>
+          <span class="chip">${project.counts.resources || 0} archivos</span>
         </div>
         <div class="row project-actions">
           <button class="ghost" data-project-edit="${esc(project.id)}" type="button">Editar</button>
@@ -295,7 +314,7 @@ function renderTables() {
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>ID</th>${columns}<th>Creado</th></tr>
+                <tr><th>ID</th>${columns}<th>Creado</th><th>Acciones</th></tr>
               </thead>
               <tbody>
                 ${(table.rows || []).slice(0, 6).map((row) => `
@@ -303,6 +322,12 @@ function renderTables() {
                     <td>${esc(row.id)}</td>
                     ${table.fields.map((field) => `<td>${esc(row[field.name])}</td>`).join("")}
                     <td>${esc(row.createdAt)}</td>
+                    <td>
+                      <div class="table-row-actions">
+                        <button class="ghost" data-row-edit="${esc(table.name)}" data-row-id="${esc(row.id)}" type="button">Editar</button>
+                        <button class="ghost" data-row-delete="${esc(table.name)}" data-row-id="${esc(row.id)}" type="button">Eliminar</button>
+                      </div>
+                    </td>
                   </tr>
                 `).join("")}
               </tbody>
@@ -318,7 +343,10 @@ function renderTables() {
               <h3>${esc(table.title || table.name)}</h3>
               <p>${esc(table.description || table.rules || "Tabla interna del proyecto")}</p>
             </div>
-            <button class="ghost" data-delete-table="${esc(table.name)}" type="button">Eliminar</button>
+            <div class="table-actions">
+              <button class="ghost" data-row-new="${esc(table.name)}" type="button">Nuevo registro</button>
+              <button class="ghost" data-delete-table="${esc(table.name)}" type="button">Eliminar tabla</button>
+            </div>
           </div>
           <div class="chips">
             ${table.fields.map((field) => `<span class="chip">${esc(field.label)} | ${esc(field.type)}</span>`).join("")}
@@ -328,6 +356,111 @@ function renderTables() {
       `;
     }).join("")
     : '<div class="item"><small>No hay tablas internas creadas en este proyecto.</small></div>';
+}
+
+function renderResources() {
+  $("#resources").innerHTML = state.resources.length
+    ? state.resources.map((resource) => `
+      <article class="item">
+        <div class="item-row">
+          <div class="resource-title">
+            <strong>${esc(resource.name)}</strong>
+            <span class="resource-kicker">${esc(resource.kind)}</span>
+          </div>
+          <div class="resource-actions">
+            <button class="ghost" data-resource-view="${esc(resource.id)}" type="button">Ver</button>
+            <button class="ghost" data-resource-use="${esc(resource.name)}" type="button">Usar en chat</button>
+            <button class="ghost" data-resource-delete="${esc(resource.id)}" type="button">Eliminar</button>
+          </div>
+        </div>
+        <small>${esc(resource.description || "Sin descripcion adicional.")}</small>
+        <small class="resource-meta">${esc(resource.mimeType)} | ${Number(resource.size || 0).toLocaleString("es-MX")} bytes | ${esc(friendlyDate(resource.updatedAt))}</small>
+        <p>${esc(resource.preview || "Sin vista previa.")}</p>
+      </article>
+    `).join("")
+    : '<div class="item"><small>Aun no hay archivos o notas dentro del proyecto.</small></div>';
+
+  $("#resource-preview-name").textContent = state.resourceView?.name || "Sin archivo seleccionado";
+  $("#resource-preview").textContent = state.resourceView?.content || "Selecciona un archivo o nota para ver su contenido.";
+}
+
+function renderActivity() {
+  $("#activity").innerHTML = state.activity.length
+    ? state.activity.map((item) => `
+      <article class="activity-item">
+        <div class="item-row">
+          <div>
+            <strong>${esc(item.title || "Actividad")}</strong>
+            <small>${esc(friendlyDate(item.createdAt))}</small>
+          </div>
+          <span class="activity-type">${esc(item.type || "evento")}</span>
+        </div>
+        <p>${esc(item.summary || "Sin resumen.")}</p>
+      </article>
+    `).join("")
+    : '<div class="item"><small>Aun no hay actividad en este proyecto.</small></div>';
+}
+
+function closeRowModal() {
+  $("#row-modal").classList.add("hidden");
+}
+
+function findTableByName(tableName) {
+  return state.tables.find((table) => table.name === tableName);
+}
+
+function openRowModal(tableName, rowId = "") {
+  const table = findTableByName(tableName);
+  if (!table) {
+    show({ error: `No encontre la tabla ${tableName}.` });
+    return;
+  }
+
+  const row = rowId ? (table.rows || []).find((item) => item.id === rowId) : null;
+  $("#row-form").tableName.value = table.name;
+  $("#row-form").rowId.value = row?.id || "";
+  $("#row-modal-title").textContent = row ? `Editar registro en ${table.title}` : `Nuevo registro en ${table.title}`;
+  $("#row-delete").classList.toggle("hidden", !row);
+
+  $("#row-form-fields").innerHTML = table.fields.map((field) => {
+    const value = row?.[field.name] ?? field.defaultValue ?? "";
+    if (field.type === "boolean") {
+      return `
+        <label>${esc(field.label)}
+          <select name="${esc(field.name)}">
+            <option value="">Sin valor</option>
+            <option value="true" ${value === true ? "selected" : ""}>Si</option>
+            <option value="false" ${value === false ? "selected" : ""}>No</option>
+          </select>
+        </label>
+      `;
+    }
+
+    const inputType = field.type === "number" || field.type === "integer" ? "number" : "text";
+    return `
+      <label>${esc(field.label)}
+        <input name="${esc(field.name)}" type="${inputType}" value="${esc(value)}" ${field.required ? "required" : ""} />
+      </label>
+    `;
+  }).join("");
+
+  $("#row-modal").classList.remove("hidden");
+}
+
+function collectRowPayload(form, tableName) {
+  const table = findTableByName(tableName);
+  const payload = {};
+  for (const field of table.fields) {
+    const raw = form[field.name]?.value;
+    if (field.type === "boolean") {
+      if (raw === "") continue;
+      payload[field.name] = raw === "true";
+      continue;
+    }
+    if (raw === "" && !field.required) continue;
+    payload[field.name] = raw;
+  }
+  return payload;
 }
 
 function render() {
@@ -366,6 +499,11 @@ function render() {
   renderTools();
   renderDatabases();
   renderTables();
+  if (state.resourceView && !state.resources.some((resource) => resource.id === state.resourceView.id)) {
+    state.resourceView = null;
+  }
+  renderResources();
+  renderActivity();
 }
 
 async function refresh() {
@@ -641,6 +779,84 @@ $("#db-form").addEventListener("submit", async (event) => {
   }
 });
 
+$("#resource-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const file = form.file.files?.[0];
+    let content = form.content.value;
+    let name = form.name.value;
+    let mimeType = "text/plain";
+
+    if (file) {
+      if (file.size > 250000) {
+        throw new Error("Por ahora solo se admiten archivos de texto ligeros de hasta 250 KB.");
+      }
+      content = await file.text();
+      name = name || file.name;
+      mimeType = file.type || mimeType;
+    }
+
+    if (!content.trim()) throw new Error("Agrega contenido o selecciona un archivo de texto.");
+
+    const result = await api("/api/resources", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        kind: form.kind.value,
+        description: form.description.value,
+        mimeType,
+        content,
+      }),
+    });
+    state.resourceView = result;
+    form.reset();
+    show({ paso: "Archivo guardado", result });
+    await refresh();
+  } catch (err) {
+    show({ error: err.message });
+  }
+});
+
+$("#row-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const tableName = form.tableName.value;
+  const rowId = form.rowId.value;
+  try {
+    const payload = collectRowPayload(form, tableName);
+    const path = rowId
+      ? `/api/tables/${encodeURIComponent(tableName)}/rows/${encodeURIComponent(rowId)}`
+      : `/api/tables/${encodeURIComponent(tableName)}/rows`;
+    const result = await api(path, {
+      method: rowId ? "PUT" : "POST",
+      body: JSON.stringify(payload),
+    });
+    closeRowModal();
+    show({ paso: rowId ? "Registro actualizado" : "Registro creado", result });
+    await refresh();
+  } catch (err) {
+    show({ error: err.message });
+  }
+});
+
+$("#row-delete").addEventListener("click", async () => {
+  const form = $("#row-form");
+  const tableName = form.tableName.value;
+  const rowId = form.rowId.value;
+  if (!rowId) return;
+  try {
+    const result = await api(`/api/tables/${encodeURIComponent(tableName)}/rows/${encodeURIComponent(rowId)}`, {
+      method: "DELETE",
+    });
+    closeRowModal();
+    show({ paso: "Registro eliminado", result });
+    await refresh();
+  } catch (err) {
+    show({ error: err.message });
+  }
+});
+
 $("#copy-url").addEventListener("click", async () => {
   await navigator.clipboard.writeText(state.mcpUrl);
   show({ copiado: state.mcpUrl });
@@ -674,6 +890,9 @@ $("#auth-close").addEventListener("click", () => {
 $("#auth-overlay").addEventListener("click", () => {
   setAuthModal(false);
 });
+
+$("#row-close").addEventListener("click", closeRowModal);
+$("#row-overlay").addEventListener("click", closeRowModal);
 
 $("#mcp-list").addEventListener("click", async () => {
   try {
@@ -733,6 +952,67 @@ document.addEventListener("click", async (event) => {
       editingProjectId = "";
       await refresh();
       show("Proyecto eliminado.");
+    } catch (err) {
+      show({ error: err.message });
+    }
+    return;
+  }
+
+  const resourceViewId = event.target.closest("[data-resource-view]")?.dataset.resourceView;
+  if (resourceViewId) {
+    try {
+      state.resourceView = await api(`/api/resources/${encodeURIComponent(resourceViewId)}`);
+      renderResources();
+      show("Vista previa actualizada.");
+    } catch (err) {
+      show({ error: err.message });
+    }
+    return;
+  }
+
+  const resourceUseName = event.target.closest("[data-resource-use]")?.dataset.resourceUse;
+  if (resourceUseName) {
+    $("#command").value = `revisa el archivo ${resourceUseName} y dime como usarlo dentro del proyecto`;
+    $("#command").focus();
+    show("Deje listo un prompt para consultar ese archivo desde el chat.");
+    return;
+  }
+
+  const resourceDeleteId = event.target.closest("[data-resource-delete]")?.dataset.resourceDelete;
+  if (resourceDeleteId) {
+    try {
+      await api(`/api/resources/${encodeURIComponent(resourceDeleteId)}`, { method: "DELETE" });
+      if (state.resourceView?.id === resourceDeleteId) state.resourceView = null;
+      show("Archivo eliminado.");
+      await refresh();
+    } catch (err) {
+      show({ error: err.message });
+    }
+    return;
+  }
+
+  const newRowTable = event.target.closest("[data-row-new]")?.dataset.rowNew;
+  if (newRowTable) {
+    openRowModal(newRowTable);
+    return;
+  }
+
+  const editRowButton = event.target.closest("[data-row-edit]");
+  if (editRowButton) {
+    openRowModal(editRowButton.dataset.rowEdit, editRowButton.dataset.rowId);
+    return;
+  }
+
+  const deleteRowButton = event.target.closest("[data-row-delete]");
+  if (deleteRowButton) {
+    try {
+      const tableName = deleteRowButton.dataset.rowDelete;
+      const rowId = deleteRowButton.dataset.rowId;
+      const result = await api(`/api/tables/${encodeURIComponent(tableName)}/rows/${encodeURIComponent(rowId)}`, {
+        method: "DELETE",
+      });
+      show({ paso: "Registro eliminado", result });
+      await refresh();
     } catch (err) {
       show({ error: err.message });
     }

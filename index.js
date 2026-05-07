@@ -188,6 +188,56 @@ app.delete("/api/tables/:name", authRequired, (req, res) => {
   res.status(204).end();
 });
 
+app.post("/api/tables/:tableName/rows", authRequired, asyncRoute(async (req, res) => {
+  const projectKey = store.getState(req.user.id, publicBaseUrl(req)).project.key;
+  const row = store.insertWorkspaceRow(
+    req.user.workspaceKey,
+    projectKey,
+    req.params.tableName,
+    req.body || {},
+    { source: "portal", toolTitle: `Nuevo registro en ${req.params.tableName}` },
+  );
+  res.status(201).json({ ok: true, row });
+}));
+
+app.put("/api/tables/:tableName/rows/:rowId", authRequired, asyncRoute(async (req, res) => {
+  const projectKey = store.getState(req.user.id, publicBaseUrl(req)).project.key;
+  const row = store.updateWorkspaceRow(
+    req.user.workspaceKey,
+    projectKey,
+    req.params.tableName,
+    req.params.rowId,
+    req.body || {},
+    { source: "portal", toolTitle: `Registro actualizado en ${req.params.tableName}` },
+  );
+  res.json({ ok: true, row });
+}));
+
+app.delete("/api/tables/:tableName/rows/:rowId", authRequired, asyncRoute(async (req, res) => {
+  const projectKey = store.getState(req.user.id, publicBaseUrl(req)).project.key;
+  const deleted = store.deleteWorkspaceRow(
+    req.user.workspaceKey,
+    projectKey,
+    req.params.tableName,
+    req.params.rowId,
+    { source: "portal", toolTitle: `Registro eliminado de ${req.params.tableName}` },
+  );
+  res.json({ ok: true, deleted });
+}));
+
+app.post("/api/resources", authRequired, (req, res) => {
+  res.status(201).json(store.saveResource(req.user.id, req.body || {}));
+});
+
+app.get("/api/resources/:resourceId", authRequired, (req, res) => {
+  res.json(store.getResource(req.user.id, req.params.resourceId));
+});
+
+app.delete("/api/resources/:resourceId", authRequired, (req, res) => {
+  store.deleteResource(req.user.id, req.params.resourceId);
+  res.status(204).end();
+});
+
 app.post("/api/ai-table", authRequired, asyncRoute(async (req, res) => {
   const prompt = String(req.body?.prompt || "").trim();
   if (!prompt) {
@@ -255,6 +305,33 @@ app.post("/workspace-api/:workspaceKey/tables/:tableName/rows", asyncRoute(async
   res.status(201).json({ ok: true, row });
 }));
 
+app.put("/workspace-api/:workspaceKey/tables/:tableName/rows/:rowId", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
+  const row = store.updateWorkspaceRow(
+    req.params.workspaceKey,
+    target.project.key,
+    req.params.tableName,
+    req.params.rowId,
+    req.body || {},
+    { source: "workspace-api", toolTitle: `Registro actualizado en ${req.params.tableName}` },
+  );
+  res.json({ ok: true, row });
+}));
+
+app.delete("/workspace-api/:workspaceKey/tables/:tableName/rows/:rowId", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey);
+  if (!target) return;
+  const deleted = store.deleteWorkspaceRow(
+    req.params.workspaceKey,
+    target.project.key,
+    req.params.tableName,
+    req.params.rowId,
+    { source: "workspace-api", toolTitle: `Registro eliminado de ${req.params.tableName}` },
+  );
+  res.json({ ok: true, deleted });
+}));
+
 app.post("/workspace-api/:workspaceKey/sql", asyncRoute(async (req, res) => {
   const target = workspaceProjectOr404(res, req.params.workspaceKey);
   if (!target) return;
@@ -286,6 +363,33 @@ app.post("/workspace-api/:workspaceKey/:projectKey/tables/:tableName/rows", asyn
     req.body || {},
   );
   res.status(201).json({ ok: true, row });
+}));
+
+app.put("/workspace-api/:workspaceKey/:projectKey/tables/:tableName/rows/:rowId", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+  const row = store.updateWorkspaceRow(
+    req.params.workspaceKey,
+    req.params.projectKey,
+    req.params.tableName,
+    req.params.rowId,
+    req.body || {},
+    { source: "workspace-api", toolTitle: `Registro actualizado en ${req.params.tableName}` },
+  );
+  res.json({ ok: true, row });
+}));
+
+app.delete("/workspace-api/:workspaceKey/:projectKey/tables/:tableName/rows/:rowId", asyncRoute(async (req, res) => {
+  const target = workspaceProjectOr404(res, req.params.workspaceKey, req.params.projectKey);
+  if (!target) return;
+  const deleted = store.deleteWorkspaceRow(
+    req.params.workspaceKey,
+    req.params.projectKey,
+    req.params.tableName,
+    req.params.rowId,
+    { source: "workspace-api", toolTitle: `Registro eliminado de ${req.params.tableName}` },
+  );
+  res.json({ ok: true, deleted });
 }));
 
 app.post("/workspace-api/:workspaceKey/:projectKey/sql", asyncRoute(async (req, res) => {

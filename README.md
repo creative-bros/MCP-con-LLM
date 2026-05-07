@@ -15,6 +15,10 @@ Portal interno para que cada desarrollador cree proyectos por sistema, guarde su
 - Registro de salida esperada por tool
 - Configuracion de bases en modo MySQL directa, SQL por HTTP o solo documentacion
 - Guia MCP para que ChatGPT sepa cuando ejecutar, consultar, visualizar o pedir datos faltantes
+- Archivos, SQL, codigo y notas cargables por proyecto
+- Historial de actividad visible en el portal
+- CRUD de registros internos
+- Tools MCP para configurar el proyecto desde ChatGPT
 
 ## Ejecutar
 
@@ -45,7 +49,7 @@ Status 1 significa activo y -1 significa descartado.
 ```
 
 7. El portal crea la tabla y tambien tools internas para usarla desde chat.
-8. Prueba en `Centro operativo` con una instruccion natural.
+8. Prueba en `Centro operativo` si quieres validar localmente, pero el flujo real queda pensado para ChatGPT.
 
 ## Registrar APIs legacy
 
@@ -57,6 +61,13 @@ En `Tools API externas` puedes registrar endpoints reales de tu sistema:
 - cualquier otra accion que tu sistema exponga por HTTP
 
 Cada tool se publica en el MCP del proyecto activo.
+
+Ahora tambien puedes registrar estas APIs desde ChatGPT con instrucciones como:
+
+```text
+registra la api /agregaCliente como tool del proyecto.
+usa POST y recibe nombre, email y telefono.
+```
 
 ## Bases y SQL
 
@@ -73,6 +84,17 @@ cuantas polizas tiene el sistema
 cuantas polizas siguen vigentes
 muestrame las polizas vigentes
 que acciones puedes hacer dentro de este proyecto
+```
+
+Y tambien puede dejar lista la estructura del proyecto desde el propio chat:
+
+```text
+crea una tabla clientes con nombre, email, telefono y status.
+status 1 significa activo y -1 significa inactivo.
+```
+
+```text
+guarda este SQL como archivo llamado polizas.sql
 ```
 
 ## MCP por proyecto
@@ -98,6 +120,8 @@ npx -y localtunnel --port 3060 --local-host 127.0.0.1
 ```
 
 Luego entra al portal, copia tu `URL MCP personal` y pegala en ChatGPT.
+
+Una vez conectado, ChatGPT no solo opera el sistema: tambien puede crear tablas, registrar APIs, documentar bases y guardar archivos de contexto dentro del proyecto actual.
 
 ## Verificacion
 

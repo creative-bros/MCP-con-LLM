@@ -84,6 +84,23 @@ quiero ver las polizas vigentes
 agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998
 ```
 
+Tambien puede preparar el proyecto desde el mismo chat, por ejemplo:
+
+```text
+crea una tabla clientes con nombre, email, telefono y status.
+status 1 significa activo y -1 significa inactivo.
+```
+
+```text
+registra la api /agregaCliente como tool del proyecto.
+Es POST y recibe nombre, email y telefono.
+```
+
+```text
+guarda este archivo como polizas.sql y luego dime que consultas soporta:
+SELECT folio, cliente, status FROM polizas WHERE status = 1;
+```
+
 ## Como decide ChatGPT que hacer
 
 Este MCP ya expone una guia llamada `guiaProyecto` para que ChatGPT sepa si la solicitud del usuario es:
@@ -99,6 +116,10 @@ Con eso ChatGPT puede:
 - consultar una base
 - mostrar resultados
 - ejecutar una tool
+- crear tablas internas
+- registrar APIs legacy
+- documentar bases
+- guardar codigo, SQL o documentos del proyecto
 
 ## Nota importante
 

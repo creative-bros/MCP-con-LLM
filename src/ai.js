@@ -41,6 +41,183 @@ function databaseToolDefinitions(store, userId) {
   }));
 }
 
+function resourceToolDefinitions() {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "listarArchivosProyecto",
+        description:
+          "Lista los archivos, notas, codigo y contexto cargado en el proyecto. Usa esta tool cuando el usuario mencione archivos o documentos.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Filtro opcional por nombre o descripcion" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "verArchivoProyecto",
+        description: "Abre el contenido completo de un archivo o nota del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            resourceId: { type: "string" },
+            name: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "actividadProyecto",
+        description: "Consulta la actividad reciente del proyecto para validar cambios.",
+        parameters: {
+          type: "object",
+          properties: {
+            limit: { type: "number" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+}
+
+function managementToolDefinitions() {
+  return [
+    {
+      type: "function",
+      function: {
+        name: "configurarProyectoActual",
+        description: "Actualiza nombre, descripcion, contexto o URL base del proyecto actual.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            name: { type: "string" },
+            description: { type: "string" },
+            context: { type: "string" },
+            apiBaseUrl: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "crearTablaProyecto",
+        description: "Crea o actualiza una tabla interna del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string" },
+            rules: { type: "string" },
+            fields: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  label: { type: "string" },
+                  type: { type: "string" },
+                  required: { type: "boolean" },
+                  description: { type: "string" },
+                },
+                required: ["name", "label", "type", "required"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["name", "fields"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "registrarToolProyecto",
+        description: "Registra una API HTTP del proyecto para usarla desde ChatGPT.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string" },
+            method: { type: "string" },
+            url: { type: "string" },
+            inputSchema: { type: "object", additionalProperties: true },
+            outputSchema: { type: "object", additionalProperties: true },
+            outputExample: { type: "string" },
+            headers: { type: "object", additionalProperties: { type: "string" } },
+            bodyTemplate: { type: "object", additionalProperties: true },
+            readOnly: { type: "boolean" },
+          },
+          required: ["name", "method", "url"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "registrarBaseProyecto",
+        description: "Guarda una base MySQL, SQL HTTP o documentacion de base para el proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            title: { type: "string" },
+            toolName: { type: "string" },
+            mode: { type: "string" },
+            sqlApiUrl: { type: "string" },
+            documentation: { type: "string" },
+            rules: { type: "string" },
+            mysql: { type: "object", additionalProperties: true },
+            host: { type: "string" },
+            port: { type: "number" },
+            user: { type: "string" },
+            password: { type: "string" },
+            database: { type: "string" },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "guardarArchivoProyecto",
+        description: "Guarda codigo, SQL, documentacion o notas dentro del proyecto actual.",
+        parameters: {
+          type: "object",
+          properties: {
+            resourceId: { type: "string" },
+            name: { type: "string" },
+            kind: { type: "string" },
+            description: { type: "string" },
+            mimeType: { type: "string" },
+            content: { type: "string" },
+          },
+          required: ["name", "content"],
+          additionalProperties: false,
+        },
+      },
+    },
+  ];
+}
+
 async function openAiChat(settings, body) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -77,7 +254,12 @@ export async function runAiCommand(store, userId, text) {
   }
 
   const state = store.getState(userId, "https://portal.local");
-  const tools = [...apiToolDefinitions(store, userId), ...databaseToolDefinitions(store, userId)];
+  const tools = [
+    ...apiToolDefinitions(store, userId),
+    ...databaseToolDefinitions(store, userId),
+    ...managementToolDefinitions(),
+    ...resourceToolDefinitions(),
+  ];
   if (!tools.length) {
     throw settingsError("Primero registra una tool, una base, crea una tabla o carga la demo.");
   }
@@ -91,6 +273,8 @@ export async function runAiCommand(store, userId, text) {
         " Clasifica la solicitud del usuario como accion, consulta, visualizacion o ayuda. " +
         "Cuando el usuario pida una accion disponible, llama exactamente la function tool correcta. " +
         "Si la solicitud implica consultar o visualizar datos del sistema, puedes usar tools de base con SQL read-only o tools read-only. " +
+        "Si el usuario pide configurar el proyecto, crear tablas, registrar APIs o guardar codigo/documentacion, usa las tools de gestion del proyecto. " +
+        "Si el usuario menciona archivos, codigo, SQL, layouts o documentos cargados en el proyecto, usa primero listarArchivosProyecto y luego verArchivoProyecto. " +
         "Si faltan datos requeridos, responde pidiendolos en espanol. " +
         "Si el usuario quiere ver algo, resume el resultado de forma clara y ordenada.",
     },

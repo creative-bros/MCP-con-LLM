@@ -5,9 +5,11 @@ import mysql from "mysql2/promise";
 
 const dataFile = path.join(process.cwd(), "data", "portal.json");
 const defaultModel = "gpt-4.1-mini";
+const maxResourceContentLength = 250_000;
+const maxActivityEntries = 80;
 
 const initialData = {
-  version: 3,
+  version: 4,
   users: [],
   sessions: [],
 };
@@ -34,6 +36,16 @@ function json(value, fallback) {
 
 function keyPreview(value) {
   return value ? `${value.slice(0, 7)}...${value.slice(-4)}` : "";
+}
+
+function clipText(value, size = 220) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.length > size ? `${text.slice(0, size - 1)}...` : text;
+}
+
+function resourcePreview(value, size = 180) {
+  return clipText(String(value || "").replace(/\s+/g, " "), size);
 }
 
 function normalizeSchema(schema) {
@@ -279,6 +291,64 @@ function normalizeDatabase(input, previous = {}) {
   };
 }
 
+function normalizeResource(input, previous = {}) {
+  const name = String(input.name ?? previous.name ?? "").trim();
+  const content = String(input.content ?? previous.content ?? "");
+  if (name.length < 2) throw new Error("El archivo o nota necesita un nombre.");
+  if (!content.trim()) throw new Error("Agrega contenido o carga un archivo de texto.");
+  if (content.length > maxResourceContentLength) {
+    throw new Error(`El contenido supera el limite de ${maxResourceContentLength.toLocaleString("es-MX")} caracteres.`);
+  }
+
+  const kind = slug(input.kind || previous.kind || "archivo", "archivo");
+  return {
+    id: input.id || previous.id || `res_${randomUUID()}`,
+    kind,
+    name,
+    description: String(input.description ?? previous.description ?? ""),
+    mimeType: String(input.mimeType ?? previous.mimeType ?? "text/plain"),
+    content,
+    size: Buffer.byteLength(content, "utf8"),
+    createdAt: input.createdAt || previous.createdAt || new Date().toISOString(),
+    updatedAt: input.updatedAt || previous.updatedAt || new Date().toISOString(),
+  };
+}
+
+function normalizeActivity(input) {
+  return {
+    id: input.id || `act_${randomUUID()}`,
+    type: String(input.type || "evento"),
+    title: String(input.title || "Actividad"),
+    summary: String(input.summary || ""),
+    meta: typeof input.meta === "object" && input.meta ? clone(input.meta) : {},
+    createdAt: input.createdAt || new Date().toISOString(),
+  };
+}
+
+function summarizeResource(resource, includeContent = false) {
+  return {
+    id: resource.id,
+    kind: resource.kind,
+    name: resource.name,
+    description: resource.description,
+    mimeType: resource.mimeType,
+    size: resource.size,
+    preview: resourcePreview(resource.content),
+    createdAt: resource.createdAt,
+    updatedAt: resource.updatedAt,
+    ...(includeContent ? { content: resource.content } : {}),
+  };
+}
+
+function pushActivity(project, input) {
+  project.activity ||= [];
+  const entry = normalizeActivity(input);
+  project.activity.unshift(entry);
+  project.activity = project.activity.slice(0, maxActivityEntries);
+  project.updatedAt = new Date().toISOString();
+  return entry;
+}
+
 function normalizeTable(input) {
   const fields = normalizeFields(input.fields);
   return {
@@ -342,6 +412,7 @@ function projectSummary(user, project, baseUrl) {
       databases: project.databases.length,
       tables: project.tables.length,
       rows: project.tables.reduce((sum, table) => sum + (table.rows?.length || 0), 0),
+      resources: project.resources?.length || 0,
     },
     mcpUrl: `${baseUrl}/mcp/${user.workspaceKey}/${project.key}`,
   };
@@ -404,11 +475,20 @@ function projectGuide(user, project, options = {}) {
     rules: table.rules || "",
   }));
 
+  const resources = (project.resources || []).map((resource) => ({
+    id: resource.id,
+    name: resource.name,
+    kind: resource.kind,
+    description: resource.description || "",
+    preview: resourcePreview(resource.content),
+  }));
+
   const catalog = [
     ...actionTools.map((item) => ({ type: "action", ...item })),
     ...readTools.map((item) => ({ type: "read", ...item })),
     ...databases.map((item) => ({ type: "database", ...item })),
     ...tables.map((item) => ({ type: "table", ...item })),
+    ...resources.map((item) => ({ type: "resource", ...item })),
   ];
 
   const matches = terms.length
@@ -458,12 +538,17 @@ function projectGuide(user, project, options = {}) {
     availableReadTools: readTools,
     availableDatabases: databases,
     internalTables: tables,
+    projectResources: resources,
     recommendedTools,
     bestMatches: matches,
     examplePrompts: [
+      "crea una tabla clientes con nombre, email, telefono y status",
+      "registra la api /agregaCliente como tool de este proyecto",
+      "guarda este SQL como archivo llamado polizas.sql",
       "agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998",
       "cuantas polizas tiene el sistema",
       "muestrame las polizas vigentes",
+      "abre el archivo polizas.sql y dime que consultas o tablas contiene",
       "que acciones puedes hacer dentro de este proyecto",
     ],
   };
@@ -481,15 +566,24 @@ function createEmptyProject(seed = {}) {
     tools: [],
     databases: [],
     tables: [],
+    resources: [],
+    activity: [],
     createdAt: seed.createdAt || new Date().toISOString(),
     updatedAt: seed.updatedAt || new Date().toISOString(),
   };
 }
 
 function syncTableTools(project, table) {
-  const names = new Set([`crear_${table.name}`, `listar_${table.name}`]);
+  const names = new Set([
+    `crear_${table.name}`,
+    `listar_${table.name}`,
+    `actualizar_${table.name}`,
+    `eliminar_${table.name}`,
+  ]);
   const existingCreate = project.tools.find((tool) => tool.generated && tool.name === `crear_${table.name}`);
   const existingList = project.tools.find((tool) => tool.generated && tool.name === `listar_${table.name}`);
+  const existingUpdate = project.tools.find((tool) => tool.generated && tool.name === `actualizar_${table.name}`);
+  const existingDelete = project.tools.find((tool) => tool.generated && tool.name === `eliminar_${table.name}`);
   project.tools = project.tools.filter((tool) => !(tool.generated && names.has(tool.name)));
 
   project.tools.push({
@@ -529,6 +623,53 @@ function syncTableTools(project, table) {
     },
     outputExample: "{ ok: true, rows: [...] }",
   });
+
+  project.tools.push({
+    id: existingUpdate?.id || `tool_${randomUUID()}`,
+    source: "internal",
+    generated: true,
+    locked: false,
+    tableName: table.name,
+    name: `actualizar_${table.name}`,
+    title: `Actualizar ${table.title || table.name}`,
+    description: `Actualiza un registro existente de la tabla ${table.title || table.name}.`,
+    method: "PUT",
+    headers: {},
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        rowId: { type: "string", description: "ID del registro a actualizar" },
+        ...schemaFromFields(table.fields).properties,
+      },
+      required: ["rowId"],
+      additionalProperties: false,
+    },
+    outputExample: "{ ok: true, row: { ... } }",
+  });
+
+  project.tools.push({
+    id: existingDelete?.id || `tool_${randomUUID()}`,
+    source: "internal",
+    generated: true,
+    locked: false,
+    tableName: table.name,
+    name: `eliminar_${table.name}`,
+    title: `Eliminar ${table.title || table.name}`,
+    description: `Elimina un registro de la tabla ${table.title || table.name}.`,
+    method: "DELETE",
+    headers: {},
+    readOnly: false,
+    inputSchema: {
+      type: "object",
+      properties: {
+        rowId: { type: "string", description: "ID del registro a eliminar" },
+      },
+      required: ["rowId"],
+      additionalProperties: false,
+    },
+    outputExample: "{ ok: true, deleted: { id: '...' } }",
+  });
 }
 
 function syncWorkspaceDatabase(project) {
@@ -562,6 +703,12 @@ function syncProjectArtifacts(project) {
   project.tools = Array.isArray(project.tools) ? project.tools.map(normalizeTool) : [];
   project.databases = Array.isArray(project.databases) ? project.databases.map((db) => normalizeDatabase(db)) : [];
   project.tables = Array.isArray(project.tables) ? project.tables.map(normalizeTable) : [];
+  project.resources = Array.isArray(project.resources)
+    ? project.resources.map((resource) => normalizeResource(resource))
+    : [];
+  project.activity = Array.isArray(project.activity)
+    ? project.activity.map((activity) => normalizeActivity(activity))
+    : [];
 
   project.tools = project.tools.filter((tool) => !tool.generated);
   project.databases = project.databases.filter((database) => !database.generated);
@@ -591,6 +738,8 @@ function normalizeProject(project) {
   normalized.tools = Array.isArray(project.tools) ? project.tools : [];
   normalized.databases = Array.isArray(project.databases) ? project.databases : [];
   normalized.tables = Array.isArray(project.tables) ? project.tables : [];
+  normalized.resources = Array.isArray(project.resources) ? project.resources : [];
+  normalized.activity = Array.isArray(project.activity) ? project.activity : [];
   return syncProjectArtifacts(normalized);
 }
 
@@ -623,7 +772,7 @@ function normalizeUser(user) {
 function normalizeData(raw) {
   if (raw && Array.isArray(raw.users)) {
     return {
-      version: 3,
+      version: 4,
       users: raw.users.map(normalizeUser),
       sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
     };
@@ -664,12 +813,24 @@ function getProjectByKey(user, projectKey) {
   return user.projects.find((project) => project.key === projectKey) || null;
 }
 
+function getProjectByReference(user, reference = "") {
+  const target = String(reference || "").trim();
+  if (!target) return null;
+  return (
+    getProjectById(user, target)
+    || getProjectByKey(user, target)
+    || user.projects.find((project) => project.name === slug(target, target))
+    || user.projects.find((project) => slug(project.title, project.title) === slug(target, target))
+    || null
+  );
+}
+
 function getActiveProject(user) {
   return getProjectById(user, user.activeProjectId) || user.projects[0] || null;
 }
 
-function ensureProject(user, projectId = "") {
-  const project = projectId ? getProjectById(user, projectId) : getActiveProject(user);
+function ensureProject(user, projectRef = "") {
+  const project = projectRef ? getProjectByReference(user, projectRef) : getActiveProject(user);
   if (!project) throw new Error("Proyecto no encontrado.");
   return project;
 }
@@ -742,11 +903,28 @@ function findTable(project, tableName) {
   return table;
 }
 
+function findRow(table, rowId) {
+  table.rows ||= [];
+  const row = table.rows.find((item) => item.id === rowId);
+  if (!row) throw new Error(`Registro no encontrado: ${rowId}`);
+  return row;
+}
+
+function findResource(project, identifier) {
+  const target = String(identifier || "").trim();
+  const byId = (project.resources || []).find((resource) => resource.id === target);
+  if (byId) return byId;
+  const byName = (project.resources || []).find((resource) => slug(resource.name, resource.name) === slug(target, target));
+  if (byName) return byName;
+  throw new Error(`Archivo o nota no encontrado: ${identifier}`);
+}
+
 function insertRow(project, tableName, input) {
   const table = findTable(project, tableName);
   const row = {
     id: `${table.name}_${Date.now()}`,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 
   for (const field of table.fields) {
@@ -755,6 +933,28 @@ function insertRow(project, tableName, input) {
 
   table.rows ||= [];
   table.rows.push(row);
+  table.updatedAt = new Date().toISOString();
+  return row;
+}
+
+function updateRow(project, tableName, rowId, input) {
+  const table = findTable(project, tableName);
+  const row = findRow(table, rowId);
+
+  for (const field of table.fields) {
+    const candidate = input?.[field.name] === undefined ? row[field.name] : input[field.name];
+    row[field.name] = normalizeValue(field, candidate);
+  }
+
+  row.updatedAt = new Date().toISOString();
+  table.updatedAt = new Date().toISOString();
+  return row;
+}
+
+function deleteRow(project, tableName, rowId) {
+  const table = findTable(project, tableName);
+  const row = findRow(table, rowId);
+  table.rows = (table.rows || []).filter((item) => item.id !== rowId);
   table.updatedAt = new Date().toISOString();
   return row;
 }
@@ -1013,6 +1213,8 @@ export function createStore() {
         tools: project.tools.map((tool) => decorateTool(user, project, tool, baseUrl)),
         databases: project.databases.map((database) => decorateDatabase(user, project, database, baseUrl)),
         tables: clone(project.tables),
+        resources: (project.resources || []).map((resource) => summarizeResource(resource)),
+        activity: clone((project.activity || []).slice(0, 24)),
         ai: aiStatusFromUser(user),
         mcpUrl: `${baseUrl}/mcp/${user.workspaceKey}/${project.key}`,
         legacyMcpUrl: `${baseUrl}/mcp/${user.workspaceKey}`,
@@ -1044,6 +1246,31 @@ export function createStore() {
       return clone(project.databases);
     },
 
+    listResources(userId, projectKey = "") {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      return (project.resources || []).map((resource) => summarizeResource(resource));
+    },
+
+    getResource(userId, identifier, projectKey = "") {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      return summarizeResource(findResource(project, identifier), true);
+    },
+
+    getActivity(userId, projectKey = "", limit = 20) {
+      const data = readData();
+      const user = ensureUser(data, userId);
+      const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
+      if (!project) throw new Error("Proyecto no encontrado.");
+      const size = Number(limit) > 0 ? Math.min(Number(limit), maxActivityEntries) : 20;
+      return clone((project.activity || []).slice(0, size));
+    },
+
     saveSettings(userId, input) {
       return mutate((data) => {
         const user = ensureUser(data, userId);
@@ -1071,6 +1298,12 @@ export function createStore() {
           existing.context = String(input.context || "");
           existing.apiBaseUrl = input.apiBaseUrl ? assertUrl(input.apiBaseUrl) : "";
           existing.updatedAt = new Date().toISOString();
+          pushActivity(existing, {
+            type: "configuracion",
+            title: "Proyecto actualizado",
+            summary: `Se actualizo la configuracion del proyecto ${existing.title}.`,
+            meta: { projectId: existing.id },
+          });
           user.activeProjectId = existing.id;
           return projectSummary(user, existing, input.baseUrl || "http://localhost");
         }
@@ -1084,6 +1317,12 @@ export function createStore() {
         }));
         user.projects.push(project);
         user.activeProjectId = project.id;
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Proyecto creado",
+          summary: `Se creo el proyecto ${project.title}.`,
+          meta: { projectId: project.id },
+        });
         return project;
       });
     },
@@ -1111,55 +1350,79 @@ export function createStore() {
       });
     },
 
-    saveTool(userId, input) {
+    saveTool(userId, input, projectRef = "") {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         const tool = normalizeTool(input);
         project.tools = project.tools.filter((item) => item.name !== tool.name);
         project.tools.push(tool);
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Tool guardada",
+          summary: `La tool ${tool.name} ya forma parte del proyecto.`,
+          meta: { toolName: tool.name, method: tool.method },
+        });
         return tool;
       });
     },
 
-    deleteTool(userId, name) {
+    deleteTool(userId, name, projectRef = "") {
       mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         project.tools = project.tools.filter((tool) => tool.name !== name || tool.locked);
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Tool eliminada",
+          summary: `Se elimino la tool ${name}.`,
+          meta: { toolName: name },
+        });
       });
     },
 
-    saveDatabase(userId, input) {
+    saveDatabase(userId, input, projectRef = "") {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         const previous = project.databases.find((item) => item.name === slug(input.name, "base"));
         const database = normalizeDatabase(input, previous);
         project.databases = project.databases.filter((item) => item.name !== database.name);
         project.databases.push(database);
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Base documentada",
+          summary: `Se guardo la base ${database.title || database.name} en modo ${database.mode}.`,
+          meta: { databaseName: database.name, mode: database.mode },
+        });
         return database;
       });
     },
 
-    deleteDatabase(userId, name) {
+    deleteDatabase(userId, name, projectRef = "") {
       mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         project.databases = project.databases.filter(
           (database) => database.name !== name || database.locked,
         );
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Base eliminada",
+          summary: `Se elimino la base ${name}.`,
+          meta: { databaseName: name },
+        });
       });
     },
 
-    saveTable(userId, input) {
+    saveTable(userId, input, projectRef = "") {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         const name = slug(input.name, "tabla");
         const previous = project.tables.find((item) => item.name === name);
         const table = normalizeTable({
@@ -1172,25 +1435,73 @@ export function createStore() {
         project.tables.push(table);
         syncProjectArtifacts(project);
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: previous ? "Tabla actualizada" : "Tabla creada",
+          summary: `${table.title} quedo lista con ${table.fields.length} campos.`,
+          meta: { tableName: table.name, fields: table.fields.length },
+        });
         return table;
       });
     },
 
-    deleteTable(userId, name) {
+    deleteTable(userId, name, projectRef = "") {
       mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
         const tableName = slug(name, name);
         project.tables = project.tables.filter((table) => table.name !== tableName);
         syncProjectArtifacts(project);
         project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "configuracion",
+          title: "Tabla eliminada",
+          summary: `Se elimino la tabla ${tableName}.`,
+          meta: { tableName },
+        });
       });
     },
 
-    seedDemo(userId) {
+    saveResource(userId, input, projectRef = "") {
       return mutate((data) => {
         const user = ensureUser(data, userId);
-        const project = ensureProject(user);
+        const project = ensureProject(user, projectRef);
+        const previous = input.id ? (project.resources || []).find((item) => item.id === input.id) : null;
+        const resource = normalizeResource(input, previous || {});
+        resource.updatedAt = new Date().toISOString();
+        project.resources = (project.resources || []).filter((item) => item.id !== resource.id);
+        project.resources.unshift(resource);
+        project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "archivo",
+          title: previous ? "Archivo actualizado" : "Archivo cargado",
+          summary: `${resource.name} ya esta disponible para que ChatGPT lo consulte.`,
+          meta: { resourceId: resource.id, name: resource.name, kind: resource.kind },
+        });
+        return summarizeResource(resource, true);
+      });
+    },
+
+    deleteResource(userId, identifier, projectRef = "") {
+      return mutate((data) => {
+        const user = ensureUser(data, userId);
+        const project = ensureProject(user, projectRef);
+        const resource = findResource(project, identifier);
+        project.resources = (project.resources || []).filter((item) => item.id !== resource.id);
+        project.updatedAt = new Date().toISOString();
+        pushActivity(project, {
+          type: "archivo",
+          title: "Archivo eliminado",
+          summary: `Se elimino ${resource.name} del proyecto.`,
+          meta: { resourceId: resource.id, name: resource.name },
+        });
+      });
+    },
+
+    seedDemo(userId, projectRef = "") {
+      return mutate((data) => {
+        const user = ensureUser(data, userId);
+        const project = ensureProject(user, projectRef);
         project.tables = [];
         project.tools = project.tools.filter((tool) => tool.source !== "internal");
         project.databases = project.databases.filter((database) => database.source !== "internal");
@@ -1328,7 +1639,31 @@ export function createStore() {
         if (tool.readOnly || ["GET", "HEAD"].includes(tool.method || "GET")) {
           return { ok: true, status: 200, data: this.listWorkspaceRows(user.workspaceKey, project.key, tool.tableName) };
         }
-        const row = this.insertWorkspaceRow(user.workspaceKey, project.key, tool.tableName, payload);
+        if (["PUT", "PATCH"].includes(tool.method || "POST")) {
+          const rowId = String(payload.rowId || payload.id || "").trim();
+          if (!rowId) throw new Error("Falta rowId para actualizar.");
+          const row = this.updateWorkspaceRow(user.workspaceKey, project.key, tool.tableName, rowId, payload, {
+            source: "mcp",
+            toolName: tool.name,
+            toolTitle: tool.title || tool.name,
+          });
+          return { ok: true, status: 200, data: { ok: true, row } };
+        }
+        if ((tool.method || "POST") === "DELETE") {
+          const rowId = String(payload.rowId || payload.id || "").trim();
+          if (!rowId) throw new Error("Falta rowId para eliminar.");
+          const deleted = this.deleteWorkspaceRow(user.workspaceKey, project.key, tool.tableName, rowId, {
+            source: "mcp",
+            toolName: tool.name,
+            toolTitle: tool.title || tool.name,
+          });
+          return { ok: true, status: 200, data: { ok: true, deleted } };
+        }
+        const row = this.insertWorkspaceRow(user.workspaceKey, project.key, tool.tableName, payload, {
+          source: "mcp",
+          toolName: tool.name,
+          toolTitle: tool.title || tool.name,
+        });
         return { ok: true, status: 201, data: { ok: true, row } };
       }
 
@@ -1354,6 +1689,24 @@ export function createStore() {
         output = { raw: text };
       }
 
+      mutate((saveData) => {
+        const saveUser = ensureUser(saveData, userId);
+        const saveProject = projectKey ? getProjectByKey(saveUser, project.key) : ensureProject(saveUser);
+        if (!saveProject) return;
+        pushActivity(saveProject, {
+          type: "tool",
+          title: tool.title || tool.name,
+          summary: `${tool.name} respondio con HTTP ${response.status}.`,
+          meta: {
+            toolName: tool.name,
+            method,
+            status: response.status,
+            ok: response.ok,
+            args,
+          },
+        });
+      });
+
       return { ok: response.ok, status: response.status, data: output };
     },
 
@@ -1372,13 +1725,49 @@ export function createStore() {
         return this.runWorkspaceSql(user.workspaceKey, project.key, sql);
       }
       if (database.mode === "mysql") {
-        return runMysqlReadOnly(database, sql);
+        const result = await runMysqlReadOnly(database, sql);
+        mutate((saveData) => {
+          const saveUser = ensureUser(saveData, userId);
+          const saveProject = projectKey ? getProjectByKey(saveUser, project.key) : ensureProject(saveUser);
+          if (!saveProject) return;
+          pushActivity(saveProject, {
+            type: "consulta",
+            title: database.title || database.name,
+            summary: `Consulta MySQL por ${database.toolName} con ${result.count} registros.`,
+            meta: { database: database.name, toolName: database.toolName, sql, count: result.count },
+          });
+        });
+        return result;
       }
       if (database.mode === "http") {
-        return runExternalSql(database, sql);
+        const result = await runExternalSql(database, sql);
+        mutate((saveData) => {
+          const saveUser = ensureUser(saveData, userId);
+          const saveProject = projectKey ? getProjectByKey(saveUser, project.key) : ensureProject(saveUser);
+          if (!saveProject) return;
+          pushActivity(saveProject, {
+            type: "consulta",
+            title: database.title || database.name,
+            summary: `Consulta SQL por ${database.toolName} en modo ${database.mode}.`,
+            meta: { database: database.name, toolName: database.toolName, sql, count: result.result?.count ?? null },
+          });
+        });
+        return result;
       }
 
-      return buildOperationDocs(database, args);
+      const docs = buildOperationDocs(database, args);
+      mutate((saveData) => {
+        const saveUser = ensureUser(saveData, userId);
+        const saveProject = projectKey ? getProjectByKey(saveUser, project.key) : ensureProject(saveUser);
+        if (!saveProject) return;
+        pushActivity(saveProject, {
+          type: "consulta",
+          title: database.title || database.name,
+          summary: `Se consulto la documentacion de ${database.toolName}.`,
+          meta: { database: database.name, toolName: database.toolName },
+        });
+      });
+      return docs;
     },
 
     async callOperation(userId, name, args = {}, projectKey = "") {
@@ -1387,18 +1776,147 @@ export function createStore() {
       const project = projectKey ? getProjectByKey(user, projectKey) : ensureProject(user);
       if (!project) throw new Error("Proyecto no encontrado.");
 
+      if (name === "configurarProyectoActual") {
+        const apiBaseUrl = typeof args.apiBaseUrl === "string" ? args.apiBaseUrl.trim() : project.apiBaseUrl;
+        return {
+          ok: true,
+          project: this.saveProject(userId, {
+            id: project.id,
+            title: args.title || project.title,
+            name: args.name || project.name,
+            description: args.description ?? project.description,
+            context: args.context ?? project.context,
+            apiBaseUrl,
+          }),
+        };
+      }
+
+      if (name === "crearTablaProyecto") {
+        return {
+          ok: true,
+          table: this.saveTable(userId, args, project.key),
+        };
+      }
+
+      if (name === "eliminarTablaProyecto") {
+        const tableName = args.name || args.tableName;
+        if (!tableName) throw new Error("Agrega name o tableName.");
+        this.deleteTable(userId, tableName, project.key);
+        return { ok: true, deleted: { tableName: slug(tableName, tableName) } };
+      }
+
+      if (name === "registrarToolProyecto") {
+        const payload = { ...args };
+        if (payload.url && String(payload.url).startsWith("/") && project.apiBaseUrl) {
+          payload.url = new URL(String(payload.url), `${project.apiBaseUrl}/`).toString();
+        }
+        return {
+          ok: true,
+          tool: this.saveTool(userId, payload, project.key),
+        };
+      }
+
+      if (name === "eliminarToolProyecto") {
+        const toolName = args.name || args.toolName;
+        if (!toolName) throw new Error("Agrega name o toolName.");
+        this.deleteTool(userId, toolName, project.key);
+        return { ok: true, deleted: { toolName } };
+      }
+
+      if (name === "registrarBaseProyecto") {
+        const payload = { ...args };
+        if (payload.sqlApiUrl && String(payload.sqlApiUrl).startsWith("/") && project.apiBaseUrl) {
+          payload.sqlApiUrl = new URL(String(payload.sqlApiUrl), `${project.apiBaseUrl}/`).toString();
+        }
+        return {
+          ok: true,
+          database: this.saveDatabase(userId, payload, project.key),
+        };
+      }
+
+      if (name === "eliminarBaseProyecto") {
+        const dbName = args.name || args.databaseName;
+        if (!dbName) throw new Error("Agrega name o databaseName.");
+        this.deleteDatabase(userId, dbName, project.key);
+        return { ok: true, deleted: { databaseName: slug(dbName, dbName) } };
+      }
+
+      if (name === "guardarArchivoProyecto") {
+        const payload = { ...args };
+        if (payload.resourceId && !payload.id) payload.id = payload.resourceId;
+        return {
+          ok: true,
+          resource: this.saveResource(userId, payload, project.key),
+        };
+      }
+
+      if (name === "eliminarArchivoProyecto") {
+        const identifier = args.resourceId || args.name;
+        if (!identifier) throw new Error("Agrega resourceId o name.");
+        this.deleteResource(userId, identifier, project.key);
+        return { ok: true, deleted: { identifier } };
+      }
+
+      if (name === "cargarDemoProyecto") {
+        return {
+          ok: true,
+          demo: this.seedDemo(userId, project.key),
+        };
+      }
+
+      if (name === "listarArchivosProyecto") {
+        const query = String(args.query || "").trim().toLowerCase();
+        const resources = this.listResources(userId, project.key).filter((resource) => {
+          if (!query) return true;
+          const source = JSON.stringify(resource).toLowerCase();
+          return source.includes(query);
+        });
+        return {
+          ok: true,
+          project: project.title,
+          count: resources.length,
+          resources,
+        };
+      }
+
+      if (name === "verArchivoProyecto") {
+        const identifier = args.resourceId || args.name;
+        if (!identifier) throw new Error("Agrega resourceId o name para abrir el archivo del proyecto.");
+        return {
+          ok: true,
+          project: project.title,
+          resource: this.getResource(userId, identifier, project.key),
+        };
+      }
+
+      if (name === "actividadProyecto") {
+        const limit = Number(args.limit || 20);
+        return {
+          ok: true,
+          project: project.title,
+          items: this.getActivity(userId, project.key, limit),
+        };
+      }
+
       const database = project.databases.find((item) => item.toolName === name);
       if (database) return this.callDatabase(userId, name, args, project.key);
 
       return this.callTool(userId, name, args, project.key);
     },
 
-    insertWorkspaceRow(workspaceKey, projectKey, tableName, input) {
+    insertWorkspaceRow(workspaceKey, projectKey, tableName, input, meta = {}) {
       return mutate((data) => {
         const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
         const row = insertRow(project, tableName, input);
+        const table = findTable(project, tableName);
+        pushActivity(project, {
+          type: "dato",
+          title: meta.toolTitle || `Nuevo registro en ${table.title}`,
+          summary: `${row.id} se creo dentro de ${table.title}.`,
+          meta: { tableName: table.name, rowId: row.id, source: meta.source || "portal", toolName: meta.toolName || "" },
+        });
         project.updatedAt = new Date().toISOString();
-        return row;
+        return clone(row);
       });
     },
 
@@ -1408,10 +1926,50 @@ export function createStore() {
       return listRows(project, tableName);
     },
 
+    updateWorkspaceRow(workspaceKey, projectKey, tableName, rowId, input, meta = {}) {
+      return mutate((data) => {
+        const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+        const row = updateRow(project, tableName, rowId, input);
+        const table = findTable(project, tableName);
+        pushActivity(project, {
+          type: "dato",
+          title: meta.toolTitle || `Registro actualizado en ${table.title}`,
+          summary: `${row.id} se actualizo dentro de ${table.title}.`,
+          meta: { tableName: table.name, rowId: row.id, source: meta.source || "portal", toolName: meta.toolName || "" },
+        });
+        project.updatedAt = new Date().toISOString();
+        return clone(row);
+      });
+    },
+
+    deleteWorkspaceRow(workspaceKey, projectKey, tableName, rowId, meta = {}) {
+      return mutate((data) => {
+        const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+        const deleted = deleteRow(project, tableName, rowId);
+        const table = findTable(project, tableName);
+        pushActivity(project, {
+          type: "dato",
+          title: meta.toolTitle || `Registro eliminado de ${table.title}`,
+          summary: `${deleted.id} se elimino de ${table.title}.`,
+          meta: { tableName: table.name, rowId: deleted.id, source: meta.source || "portal", toolName: meta.toolName || "" },
+        });
+        project.updatedAt = new Date().toISOString();
+        return clone(deleted);
+      });
+    },
+
     runWorkspaceSql(workspaceKey, projectKey, sql) {
-      const data = readData();
-      const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
-      return runInternalSql(project, sql);
+      return mutate((data) => {
+        const { project } = ensureWorkspaceProject(data, workspaceKey, projectKey);
+        const result = runInternalSql(project, sql);
+        pushActivity(project, {
+          type: "consulta",
+          title: "Consulta sobre base interna",
+          summary: `Se ejecuto SQL de lectura sobre ${result.table} y devolvio ${result.count} registros.`,
+          meta: { sql: result.sql, table: result.table, count: result.count },
+        });
+        return result;
+      });
     },
   };
 }
