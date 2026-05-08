@@ -19,6 +19,7 @@ Portal interno para que cada desarrollador cree proyectos por sistema, guarde su
 - Historial de actividad visible en el portal
 - CRUD de registros internos
 - Tools MCP para configurar el proyecto desde ChatGPT
+- Bases internas y registros administrables desde ChatGPT
 
 ## Ejecutar
 
@@ -124,6 +125,28 @@ Luego entra al portal, copia tu `URL MCP personal` y pegala en ChatGPT.
 En ChatGPT selecciona autenticacion `OAuth`. El servidor ahora publica metadata OAuth y te pedira entrar con la cuenta del portal para autorizar el MCP.
 
 Una vez conectado, ChatGPT no solo opera el sistema: tambien puede crear tablas, registrar APIs, documentar bases y guardar archivos de contexto dentro del proyecto actual.
+
+Tambien puede crear bases internas y operar datos con instrucciones como:
+
+```text
+crea una base de datos interna llamada usuarios
+```
+
+```text
+crea una tabla personas con nombre, telefono y email
+```
+
+```text
+agrega una persona con nombre Fernando Hernandez, telefono 5526997998 y email fernando@email.com
+```
+
+```text
+edita el email del registro personas_123
+```
+
+```text
+elimina el registro personas_123 de la tabla personas
+```
 
 ## Verificacion
 

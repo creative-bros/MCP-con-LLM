@@ -213,6 +213,53 @@ function tableCreateToolToMcp() {
   };
 }
 
+function databaseCreateToolToMcp() {
+  return {
+    name: "crearBaseProyecto",
+    title: "Crear base del proyecto",
+    description:
+      "Crea o actualiza una base de datos logica del proyecto para trabajar desde ChatGPT. " +
+      "Usa esta tool cuando el usuario pida crear una base interna, documentar una base nueva o dejar lista una base para luego agregar tablas, reglas o consultas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Nombre tecnico de la base" },
+        title: { type: "string", description: "Nombre visible de la base" },
+        description: { type: "string", description: "Descripcion corta o proposito" },
+        documentation: { type: "string", description: "Schema o documentacion util" },
+        rules: { type: "string", description: "Reglas de negocio y significados" },
+        toolName: { type: "string", description: "Nombre de la tool SQL asociada" },
+        mode: {
+          type: "string",
+          enum: ["internal", "docs", "mysql", "http"],
+          description: "Modo de la base. Si no se indica, usa internal.",
+        },
+        sqlApiUrl: { type: "string", description: "URL del endpoint SQL HTTP si aplica" },
+        mysql: {
+          type: "object",
+          properties: {
+            host: { type: "string" },
+            port: { type: "number" },
+            user: { type: "string" },
+            password: { type: "string" },
+            database: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Crear base del proyecto",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  };
+}
+
 function tableDeleteToolToMcp() {
   return {
     name: "eliminarTablaProyecto",
@@ -228,6 +275,145 @@ function tableDeleteToolToMcp() {
     },
     annotations: {
       title: "Eliminar tabla del proyecto",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  };
+}
+
+function tableCatalogToolToMcp() {
+  return {
+    name: "listarTablasProyecto",
+    title: "Listar tablas del proyecto",
+    description:
+      "Lista las tablas internas del proyecto con sus campos y conteos. " +
+      "Usa esta tool cuando el usuario quiera saber que entidades existen antes de crear, editar, eliminar o visualizar registros.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Filtro opcional por nombre, descripcion o reglas" },
+      },
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Listar tablas del proyecto",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  };
+}
+
+function rowCreateToolToMcp() {
+  return {
+    name: "crearRegistroProyecto",
+    title: "Crear registro del proyecto",
+    description:
+      "Crea un registro en una tabla interna del proyecto. " +
+      "Usa esta tool cuando el usuario pida agregar, dar de alta o crear un elemento dentro de una tabla ya existente.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: { type: "string", description: "Nombre tecnico de la tabla" },
+        data: {
+          type: "object",
+          description: "Valores del registro a crear",
+          additionalProperties: true,
+        },
+      },
+      required: ["tableName", "data"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Crear registro del proyecto",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  };
+}
+
+function rowListToolToMcp() {
+  return {
+    name: "listarRegistrosProyecto",
+    title: "Listar registros del proyecto",
+    description:
+      "Lista o busca registros dentro de una tabla interna del proyecto. " +
+      "Usa esta tool cuando el usuario quiera ver, buscar o inspeccionar datos existentes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: { type: "string", description: "Nombre tecnico de la tabla" },
+        rowId: { type: "string", description: "ID especifico del registro si se quiere uno solo" },
+        query: { type: "string", description: "Texto opcional para filtrar registros por coincidencia" },
+        limit: { type: "number", description: "Limite opcional de registros a devolver" },
+      },
+      required: ["tableName"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Listar registros del proyecto",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  };
+}
+
+function rowUpdateToolToMcp() {
+  return {
+    name: "actualizarRegistroProyecto",
+    title: "Actualizar registro del proyecto",
+    description:
+      "Actualiza un registro existente en una tabla interna del proyecto. " +
+      "Usa esta tool cuando el usuario pida editar, corregir o cambiar un dato ya creado.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: { type: "string", description: "Nombre tecnico de la tabla" },
+        rowId: { type: "string", description: "ID del registro a actualizar" },
+        data: {
+          type: "object",
+          description: "Campos a actualizar",
+          additionalProperties: true,
+        },
+      },
+      required: ["tableName", "rowId", "data"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Actualizar registro del proyecto",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  };
+}
+
+function rowDeleteToolToMcp() {
+  return {
+    name: "eliminarRegistroProyecto",
+    title: "Eliminar registro del proyecto",
+    description:
+      "Elimina un registro de una tabla interna del proyecto. " +
+      "Usa esta tool cuando el usuario pida borrar o dar de baja un elemento concreto.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: { type: "string", description: "Nombre tecnico de la tabla" },
+        rowId: { type: "string", description: "ID del registro a eliminar" },
+      },
+      required: ["tableName", "rowId"],
+      additionalProperties: false,
+    },
+    annotations: {
+      title: "Eliminar registro del proyecto",
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
@@ -303,8 +489,8 @@ function databaseRegisterToolToMcp() {
     name: "registrarBaseProyecto",
     title: "Registrar base del proyecto",
     description:
-      "Guarda la configuracion de una base del proyecto, ya sea MySQL directa, SQL por HTTP o solo documentacion. " +
-      "Usa esta tool cuando el usuario quiera documentar tablas legacy o conectar una base existente.",
+      "Guarda la configuracion de una base del proyecto, ya sea MySQL directa, SQL por HTTP, interna o solo documentacion. " +
+      "Usa esta tool cuando el usuario quiera documentar tablas legacy, conectar una base existente o preparar una base interna.",
     inputSchema: {
       type: "object",
       properties: {
@@ -484,6 +670,9 @@ function initializeInstructions(store, userId, projectKey = "") {
     guide.project.context ? `Contexto operativo: ${guide.project.context}` : "",
     "Clasifica cada solicitud del usuario en una de estas intenciones: accion, consulta, visualizacion o ayuda.",
     "Si el usuario quiere realizar una accion, usa una tool de escritura y pide datos faltantes antes de ejecutar.",
+    "Tienes tools internas para configurar y operar el proyecto desde este chat: crearBaseProyecto, crearTablaProyecto, listarTablasProyecto, crearRegistroProyecto, listarRegistrosProyecto, actualizarRegistroProyecto, eliminarRegistroProyecto, registrarToolProyecto, registrarBaseProyecto y guardarArchivoProyecto.",
+    "Si el usuario pide crear una base interna o una tabla nueva, no digas que no se puede: usa crearBaseProyecto y/o crearTablaProyecto segun corresponda.",
+    "Si el usuario pide agregar, editar, eliminar o visualizar datos de una tabla interna, usa las tools genericas de registros o las tools autogeneradas de esa tabla.",
     "Si el usuario quiere visualizar o revisar informacion, usa una tool read-only o una tool de base y luego presenta el resultado de forma clara.",
     "Si el usuario pregunta que se puede hacer o como ver algo, usa primero la tool guiaProyecto.",
     "Si el usuario pide configurar el proyecto, crear tablas, registrar APIs, documentar una base o guardar codigo/archivos, usa las tools de configuracion del proyecto.",
@@ -519,8 +708,14 @@ export function listMcpTools(store, userId, projectKey = "") {
   return [
     guideToolToMcp(),
     projectConfigToolToMcp(),
+    databaseCreateToolToMcp(),
     tableCreateToolToMcp(),
     tableDeleteToolToMcp(),
+    tableCatalogToolToMcp(),
+    rowCreateToolToMcp(),
+    rowListToolToMcp(),
+    rowUpdateToolToMcp(),
+    rowDeleteToolToMcp(),
     toolRegisterToolToMcp(),
     toolDeleteToolToMcp(),
     databaseRegisterToolToMcp(),
@@ -550,7 +745,7 @@ export async function handleMcpMessage(store, userId, message, projectKey = "") 
       serverInfo: {
         name: "legacy-mcp-portal",
         title: "Legacy MCP Portal",
-        version: "2.2.0",
+        version: "2.3.0",
       },
       instructions: initializeInstructions(store, userId, projectKey),
     });

@@ -587,6 +587,49 @@ function projectGuide(user, project, options = {}) {
         : [...actionTools, ...readTools, ...databases]
   ).slice(0, 8);
 
+  const managementTools = [
+    {
+      name: "crearBaseProyecto",
+      description: "Crea o actualiza una base logica del proyecto para trabajar desde ChatGPT.",
+    },
+    {
+      name: "crearTablaProyecto",
+      description: "Crea o actualiza una tabla interna del proyecto.",
+    },
+    {
+      name: "listarTablasProyecto",
+      description: "Lista las tablas internas del proyecto con sus campos y conteos.",
+    },
+    {
+      name: "crearRegistroProyecto",
+      description: "Crea un registro dentro de una tabla interna.",
+    },
+    {
+      name: "listarRegistrosProyecto",
+      description: "Lista o busca registros dentro de una tabla interna.",
+    },
+    {
+      name: "actualizarRegistroProyecto",
+      description: "Edita un registro ya creado dentro de una tabla interna.",
+    },
+    {
+      name: "eliminarRegistroProyecto",
+      description: "Elimina un registro de una tabla interna.",
+    },
+    {
+      name: "registrarToolProyecto",
+      description: "Registra una API HTTP del sistema legacy.",
+    },
+    {
+      name: "registrarBaseProyecto",
+      description: "Conecta o documenta una base MySQL, SQL HTTP o interna.",
+    },
+    {
+      name: "guardarArchivoProyecto",
+      description: "Guarda codigo, SQL, documentacion o notas dentro del proyecto.",
+    },
+  ];
+
   return {
     ok: true,
     intent: intent || "general",
@@ -611,13 +654,18 @@ function projectGuide(user, project, options = {}) {
     },
     availableActions: actionTools,
     availableReadTools: readTools,
+    managementTools,
     availableDatabases: databases,
     internalTables: tables,
     projectResources: resources,
     recommendedTools,
     bestMatches: matches,
     examplePrompts: [
+      "crea una base de datos interna llamada usuarios",
       "crea una tabla clientes con nombre, email, telefono y status",
+      "agrega una persona a la tabla personas con nombre, telefono y email",
+      "edita el correo del registro personas_123",
+      "elimina el registro personas_123 de la tabla personas",
       "registra la api /agregaCliente como tool de este proyecto",
       "guarda este SQL como archivo llamado polizas.sql",
       "agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998",
@@ -1973,10 +2021,55 @@ export function createStore() {
         };
       }
 
+      if (name === "crearBaseProyecto") {
+        const payload = {
+          ...args,
+          mode: args.mode || "internal",
+          documentation: args.documentation || args.description || "",
+        };
+        if (payload.sqlApiUrl && String(payload.sqlApiUrl).startsWith("/") && project.apiBaseUrl) {
+          payload.sqlApiUrl = new URL(String(payload.sqlApiUrl), `${project.apiBaseUrl}/`).toString();
+        }
+        return {
+          ok: true,
+          database: this.saveDatabase(userId, payload, project.key),
+        };
+      }
+
       if (name === "crearTablaProyecto") {
         return {
           ok: true,
           table: this.saveTable(userId, args, project.key),
+        };
+      }
+
+      if (name === "listarTablasProyecto") {
+        const query = String(args.query || "").trim().toLowerCase();
+        const tables = clone(project.tables)
+          .map((table) => ({
+            name: table.name,
+            title: table.title,
+            description: table.description,
+            rules: table.rules,
+            rowCount: Array.isArray(table.rows) ? table.rows.length : 0,
+            fields: table.fields.map((field) => ({
+              name: field.name,
+              label: field.label,
+              type: field.type,
+              required: field.required,
+              description: field.description,
+            })),
+          }))
+          .filter((table) => {
+            if (!query) return true;
+            return JSON.stringify(table).toLowerCase().includes(query);
+          });
+
+        return {
+          ok: true,
+          project: project.title,
+          count: tables.length,
+          tables,
         };
       }
 
@@ -2077,6 +2170,79 @@ export function createStore() {
           ok: true,
           project: project.title,
           items: this.getActivity(userId, project.key, limit),
+        };
+      }
+
+      if (name === "crearRegistroProyecto") {
+        const tableName = String(args.tableName || "").trim();
+        if (!tableName) throw new Error("Agrega tableName.");
+        const payload = typeof args.data === "object" && args.data ? args.data : {};
+        return {
+          ok: true,
+          row: this.insertWorkspaceRow(user.workspaceKey, project.key, tableName, payload, {
+            source: "mcp",
+            toolName: name,
+            toolTitle: `Nuevo registro en ${tableName}`,
+          }),
+        };
+      }
+
+      if (name === "listarRegistrosProyecto") {
+        const tableName = String(args.tableName || "").trim();
+        if (!tableName) throw new Error("Agrega tableName.");
+        const rowId = String(args.rowId || "").trim();
+        const query = String(args.query || "").trim().toLowerCase();
+        const limit = Number(args.limit || 0);
+        const listed = this.listWorkspaceRows(user.workspaceKey, project.key, tableName);
+        let rows = Array.isArray(listed.rows) ? listed.rows : [];
+
+        if (rowId) {
+          rows = rows.filter((row) => row.id === rowId);
+        }
+        if (query) {
+          rows = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query));
+        }
+        if (Number.isFinite(limit) && limit > 0) {
+          rows = rows.slice(0, limit);
+        }
+
+        return {
+          ok: true,
+          table: listed.table,
+          title: listed.title,
+          count: rows.length,
+          rows,
+        };
+      }
+
+      if (name === "actualizarRegistroProyecto") {
+        const tableName = String(args.tableName || "").trim();
+        const rowId = String(args.rowId || "").trim();
+        if (!tableName) throw new Error("Agrega tableName.");
+        if (!rowId) throw new Error("Agrega rowId.");
+        const payload = typeof args.data === "object" && args.data ? args.data : {};
+        return {
+          ok: true,
+          row: this.updateWorkspaceRow(user.workspaceKey, project.key, tableName, rowId, payload, {
+            source: "mcp",
+            toolName: name,
+            toolTitle: `Registro actualizado en ${tableName}`,
+          }),
+        };
+      }
+
+      if (name === "eliminarRegistroProyecto") {
+        const tableName = String(args.tableName || "").trim();
+        const rowId = String(args.rowId || "").trim();
+        if (!tableName) throw new Error("Agrega tableName.");
+        if (!rowId) throw new Error("Agrega rowId.");
+        return {
+          ok: true,
+          deleted: this.deleteWorkspaceRow(user.workspaceKey, project.key, tableName, rowId, {
+            source: "mcp",
+            toolName: name,
+            toolTitle: `Registro eliminado de ${tableName}`,
+          }),
         };
       }
 

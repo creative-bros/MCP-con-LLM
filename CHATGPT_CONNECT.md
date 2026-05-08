@@ -89,6 +89,10 @@ agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998
 Tambien puede preparar el proyecto desde el mismo chat, por ejemplo:
 
 ```text
+crea una base de datos interna llamada usuarios
+```
+
+```text
 crea una tabla clientes con nombre, email, telefono y status.
 status 1 significa activo y -1 significa inactivo.
 ```
@@ -101,6 +105,18 @@ Es POST y recibe nombre, email y telefono.
 ```text
 guarda este archivo como polizas.sql y luego dime que consultas soporta:
 SELECT folio, cliente, status FROM polizas WHERE status = 1;
+```
+
+```text
+agrega una persona en la tabla personas con nombre Fernando Hernandez, telefono 5526997998 y email fernando@email.com
+```
+
+```text
+edita el email del registro personas_123 y cambialo a fer@nuevo.com
+```
+
+```text
+elimina el registro personas_123 de la tabla personas
 ```
 
 ## Como decide ChatGPT que hacer
@@ -118,7 +134,9 @@ Con eso ChatGPT puede:
 - consultar una base
 - mostrar resultados
 - ejecutar una tool
+- crear bases internas
 - crear tablas internas
+- crear, listar, actualizar y eliminar registros
 - registrar APIs legacy
 - documentar bases
 - guardar codigo, SQL o documentos del proyecto

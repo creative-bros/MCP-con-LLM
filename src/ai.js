@@ -113,6 +113,31 @@ function managementToolDefinitions() {
     {
       type: "function",
       function: {
+        name: "crearBaseProyecto",
+        description:
+          "Crea o actualiza una base de datos logica del proyecto para trabajar desde ChatGPT. " +
+          "Usa modo internal si el usuario quiere una base interna dentro del portal.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            title: { type: "string" },
+            description: { type: "string" },
+            documentation: { type: "string" },
+            rules: { type: "string" },
+            toolName: { type: "string" },
+            mode: { type: "string" },
+            sqlApiUrl: { type: "string" },
+            mysql: { type: "object", additionalProperties: true },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "crearTablaProyecto",
         description: "Crea o actualiza una tabla interna del proyecto.",
         parameters: {
@@ -139,6 +164,87 @@ function managementToolDefinitions() {
             },
           },
           required: ["name", "fields"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listarTablasProyecto",
+        description: "Lista las tablas internas del proyecto con sus campos y conteos.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "crearRegistroProyecto",
+        description: "Crea un registro dentro de una tabla interna del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string" },
+            data: { type: "object", additionalProperties: true },
+          },
+          required: ["tableName", "data"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listarRegistrosProyecto",
+        description: "Lista o busca registros dentro de una tabla interna del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string" },
+            rowId: { type: "string" },
+            query: { type: "string" },
+            limit: { type: "number" },
+          },
+          required: ["tableName"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "actualizarRegistroProyecto",
+        description: "Actualiza un registro ya creado dentro de una tabla interna del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string" },
+            rowId: { type: "string" },
+            data: { type: "object", additionalProperties: true },
+          },
+          required: ["tableName", "rowId", "data"],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "eliminarRegistroProyecto",
+        description: "Elimina un registro de una tabla interna del proyecto.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string" },
+            rowId: { type: "string" },
+          },
+          required: ["tableName", "rowId"],
           additionalProperties: false,
         },
       },
@@ -272,8 +378,10 @@ export async function runAiCommand(store, userId, text) {
         `${state.project?.description || ""} ${state.project?.context || ""}`.trim() +
         " Clasifica la solicitud del usuario como accion, consulta, visualizacion o ayuda. " +
         "Cuando el usuario pida una accion disponible, llama exactamente la function tool correcta. " +
+        "Antes de decir que algo no se puede hacer, revisa si puedes resolverlo con crearBaseProyecto, crearTablaProyecto, listarTablasProyecto, crearRegistroProyecto, listarRegistrosProyecto, actualizarRegistroProyecto, eliminarRegistroProyecto, registrarToolProyecto, registrarBaseProyecto o guardarArchivoProyecto. " +
         "Si la solicitud implica consultar o visualizar datos del sistema, puedes usar tools de base con SQL read-only o tools read-only. " +
         "Si el usuario pide configurar el proyecto, crear tablas, registrar APIs o guardar codigo/documentacion, usa las tools de gestion del proyecto. " +
+        "Si el usuario pide crear una base de datos interna y una tabla en la misma instruccion, puedes ejecutar varias tools en secuencia para dejarlo listo. " +
         "Si el usuario menciona archivos, codigo, SQL, layouts o documentos cargados en el proyecto, usa primero listarArchivosProyecto y luego verArchivoProyecto. " +
         "Si faltan datos requeridos, responde pidiendolos en espanol. " +
         "Si el usuario quiere ver algo, resume el resultado de forma clara y ordenada.",
