@@ -1,21 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import mysql from "mysql2/promise";
 
 const dataFile = path.join(process.cwd(), "data", "portal.json");
 const defaultModel = "gpt-4.1-mini";
 const maxResourceContentLength = 250_000;
 const maxActivityEntries = 80;
+const oauthCodeLifetimeMs = 10 * 60 * 1000;
+const oauthTokenLifetimeMs = 12 * 60 * 60 * 1000;
 
 const initialData = {
-  version: 4,
+  version: 5,
   users: [],
   sessions: [],
+  oauthClients: [],
+  oauthCodes: [],
+  oauthTokens: [],
 };
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function futureIso(ms) {
+  return new Date(Date.now() + ms).toISOString();
 }
 
 function slug(value, fallback = "item") {
@@ -46,6 +59,10 @@ function clipText(value, size = 220) {
 
 function resourcePreview(value, size = 180) {
   return clipText(String(value || "").replace(/\s+/g, " "), size);
+}
+
+function sha256Base64Url(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("base64url");
 }
 
 function normalizeSchema(schema) {
@@ -321,7 +338,65 @@ function normalizeActivity(input) {
     title: String(input.title || "Actividad"),
     summary: String(input.summary || ""),
     meta: typeof input.meta === "object" && input.meta ? clone(input.meta) : {},
-    createdAt: input.createdAt || new Date().toISOString(),
+    createdAt: input.createdAt || nowIso(),
+  };
+}
+
+function normalizeOauthClient(input) {
+  const redirectUris = Array.isArray(input.redirect_uris || input.redirectUris)
+    ? (input.redirect_uris || input.redirectUris).map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  if (!redirectUris.length) throw new Error("El cliente OAuth necesita al menos un redirect_uri.");
+  return {
+    id: input.id || `oauth_client_${randomUUID()}`,
+    clientId: String(input.client_id || input.clientId || `client_${randomBytes(12).toString("hex")}`),
+    clientName: String(input.client_name || input.clientName || "ChatGPT MCP client"),
+    redirectUris,
+    grantTypes: Array.isArray(input.grant_types || input.grantTypes)
+      ? clone(input.grant_types || input.grantTypes)
+      : ["authorization_code"],
+    responseTypes: Array.isArray(input.response_types || input.responseTypes)
+      ? clone(input.response_types || input.responseTypes)
+      : ["code"],
+    tokenEndpointAuthMethod: String(
+      input.token_endpoint_auth_method || input.tokenEndpointAuthMethod || "none",
+    ),
+    scope: String(input.scope || "mcp:read mcp:write"),
+    createdAt: input.createdAt || nowIso(),
+  };
+}
+
+function normalizeOauthCode(input) {
+  return {
+    id: input.id || `oauth_code_${randomUUID()}`,
+    code: String(input.code || randomBytes(24).toString("base64url")),
+    clientId: String(input.clientId || ""),
+    userId: String(input.userId || ""),
+    workspaceKey: String(input.workspaceKey || ""),
+    projectKey: String(input.projectKey || ""),
+    redirectUri: String(input.redirectUri || ""),
+    scope: String(input.scope || "mcp:read mcp:write"),
+    resource: String(input.resource || ""),
+    codeChallenge: String(input.codeChallenge || ""),
+    codeChallengeMethod: String(input.codeChallengeMethod || "S256"),
+    createdAt: input.createdAt || nowIso(),
+    expiresAt: input.expiresAt || futureIso(oauthCodeLifetimeMs),
+    consumedAt: input.consumedAt || "",
+  };
+}
+
+function normalizeOauthToken(input) {
+  return {
+    id: input.id || `oauth_token_${randomUUID()}`,
+    accessToken: String(input.accessToken || randomBytes(32).toString("base64url")),
+    clientId: String(input.clientId || ""),
+    userId: String(input.userId || ""),
+    workspaceKey: String(input.workspaceKey || ""),
+    projectKey: String(input.projectKey || ""),
+    scope: String(input.scope || "mcp:read mcp:write"),
+    resource: String(input.resource || ""),
+    createdAt: input.createdAt || nowIso(),
+    expiresAt: input.expiresAt || futureIso(oauthTokenLifetimeMs),
   };
 }
 
@@ -743,6 +818,24 @@ function normalizeProject(project) {
   return syncProjectArtifacts(normalized);
 }
 
+function normalizeOauthState(raw) {
+  const now = Date.now();
+  const oauthClients = Array.isArray(raw.oauthClients)
+    ? raw.oauthClients.map(normalizeOauthClient)
+    : [];
+  const oauthCodes = Array.isArray(raw.oauthCodes)
+    ? raw.oauthCodes
+      .map(normalizeOauthCode)
+      .filter((code) => new Date(code.expiresAt).getTime() > now && !code.consumedAt)
+    : [];
+  const oauthTokens = Array.isArray(raw.oauthTokens)
+    ? raw.oauthTokens
+      .map(normalizeOauthToken)
+      .filter((token) => new Date(token.expiresAt).getTime() > now)
+    : [];
+  return { oauthClients, oauthCodes, oauthTokens };
+}
+
 function normalizeUser(user) {
   const rawProjects = Array.isArray(user.projects) && user.projects.length
     ? user.projects
@@ -771,10 +864,14 @@ function normalizeUser(user) {
 
 function normalizeData(raw) {
   if (raw && Array.isArray(raw.users)) {
+    const oauth = normalizeOauthState(raw);
     return {
-      version: 4,
+      version: 5,
       users: raw.users.map(normalizeUser),
       sessions: Array.isArray(raw.sessions) ? raw.sessions : [],
+      oauthClients: oauth.oauthClients,
+      oauthCodes: oauth.oauthCodes,
+      oauthTokens: oauth.oauthTokens,
     };
   }
   return clone(initialData);
@@ -867,6 +964,18 @@ function resolvePublishedProject(data) {
   throw new Error(
     "No pude decidir que proyecto publicar en /mcp. Configura PUBLIC_MCP_WORKSPACE_KEY y PUBLIC_MCP_PROJECT_KEY.",
   );
+}
+
+function findOauthClient(data, clientId) {
+  return (data.oauthClients || []).find((client) => client.clientId === clientId) || null;
+}
+
+function findOauthCode(data, code) {
+  return (data.oauthCodes || []).find((item) => item.code === code) || null;
+}
+
+function findOauthToken(data, accessToken) {
+  return (data.oauthTokens || []).find((item) => item.accessToken === accessToken) || null;
 }
 
 function normalizeValue(field, value) {
@@ -1178,6 +1287,79 @@ export function createStore() {
       const session = data.sessions.find((item) => item.token === token);
       if (!session) return null;
       return ensureUser(data, session.userId);
+    },
+
+    registerOauthClient(input) {
+      return mutate((data) => {
+        const client = normalizeOauthClient(input);
+        data.oauthClients = (data.oauthClients || []).filter((item) => item.clientId !== client.clientId);
+        data.oauthClients.push(client);
+        return clone(client);
+      });
+    },
+
+    getOauthClient(clientId) {
+      const data = readData();
+      return clone(findOauthClient(data, clientId));
+    },
+
+    createOauthCode(input) {
+      return mutate((data) => {
+        const client = findOauthClient(data, input.clientId);
+        if (!client) throw new Error("Cliente OAuth no encontrado.");
+        const redirectUri = String(input.redirectUri || "").trim();
+        if (!client.redirectUris.includes(redirectUri)) {
+          throw new Error("redirect_uri no permitido para este cliente.");
+        }
+        const code = normalizeOauthCode(input);
+        data.oauthCodes ||= [];
+        data.oauthCodes.push(code);
+        return clone(code);
+      });
+    },
+
+    exchangeOauthCode(input) {
+      return mutate((data) => {
+        const code = findOauthCode(data, input.code);
+        if (!code) throw new Error("Authorization code no valido.");
+        if (code.consumedAt) throw new Error("Authorization code ya fue usado.");
+        if (new Date(code.expiresAt).getTime() <= Date.now()) {
+          throw new Error("Authorization code expirado.");
+        }
+        if (String(input.clientId || "") !== code.clientId) {
+          throw new Error("client_id invalido.");
+        }
+        if (String(input.redirectUri || "") !== code.redirectUri) {
+          throw new Error("redirect_uri invalido.");
+        }
+        if (code.codeChallengeMethod !== "S256") {
+          throw new Error("Solo se soporta PKCE con S256.");
+        }
+        if (sha256Base64Url(input.codeVerifier || "") !== code.codeChallenge) {
+          throw new Error("code_verifier invalido.");
+        }
+
+        code.consumedAt = nowIso();
+        const token = normalizeOauthToken({
+          clientId: code.clientId,
+          userId: code.userId,
+          workspaceKey: code.workspaceKey,
+          projectKey: code.projectKey,
+          scope: code.scope,
+          resource: code.resource,
+        });
+        data.oauthTokens ||= [];
+        data.oauthTokens.push(token);
+        return clone(token);
+      });
+    },
+
+    getOauthToken(accessToken) {
+      const data = readData();
+      const token = findOauthToken(data, accessToken);
+      if (!token) return null;
+      if (new Date(token.expiresAt).getTime() <= Date.now()) return null;
+      return clone(token);
     },
 
     getUserByWorkspaceKey(workspaceKey) {

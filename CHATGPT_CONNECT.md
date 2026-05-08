@@ -67,6 +67,8 @@ En ChatGPT desarrollador:
 ```text
 https://twenty-moose-search.loca.lt/mcp
 ```
+4. En autenticacion elige **OAuth**.
+5. Cuando ChatGPT abra la autorizacion, entra con la cuenta del portal y aprueba el acceso al proyecto.
 
 ## 5. Da las indicaciones desde el chat
 

@@ -768,6 +768,41 @@ details {
   padding: 12px;
 }
 
+.config-group {
+  margin: 28px 0;
+  border: 1px solid rgba(37, 49, 60, 0.08);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 251, 245, 0.5);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+
+.config-group > summary {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.config-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.config-group > summary span {
+  color: var(--ink);
+  font-size: 1.25rem;
+  font-weight: 800;
+  font-family: "Iowan Old Style", Georgia, serif;
+}
+
+.config-group > summary small {
+  max-width: 68ch;
+}
+
+.config-group[open] > summary {
+  margin-bottom: 14px;
+}
+
 summary {
   cursor: pointer;
   color: var(--accent-deep);

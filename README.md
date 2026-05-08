@@ -121,6 +121,8 @@ npx -y localtunnel --port 3060 --local-host 127.0.0.1
 
 Luego entra al portal, copia tu `URL MCP personal` y pegala en ChatGPT.
 
+En ChatGPT selecciona autenticacion `OAuth`. El servidor ahora publica metadata OAuth y te pedira entrar con la cuenta del portal para autorizar el MCP.
+
 Una vez conectado, ChatGPT no solo opera el sistema: tambien puede crear tablas, registrar APIs, documentar bases y guardar archivos de contexto dentro del proyecto actual.
 
 ## Verificacion
