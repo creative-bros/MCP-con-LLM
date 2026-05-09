@@ -509,6 +509,24 @@ fernando@email.com
               <label>Contenido manual <textarea name="content" rows="8" placeholder="Pega aqui reglas, SQL, codigo o cualquier contexto que el chat debe reconocer dentro del proyecto."></textarea></label>
               <button>Guardar archivo o nota</button>
             </form>
+
+            <div class="panel-subsection">
+              <div class="panel-head">
+                <div>
+                  <h3>Subir proyecto completo</h3>
+                  <p>Selecciona la carpeta del sistema para cargar sus archivos de codigo y que ChatGPT los pueda leer o actualizar desde el chat.</p>
+                </div>
+              </div>
+
+              <form id="project-upload-form" class="form">
+                <label>
+                  Carpeta del proyecto
+                  <input name="files" type="file" webkitdirectory directory multiple />
+                </label>
+                <p class="helper-copy">Se importan archivos de texto y codigo comunes. Se omiten carpetas pesadas como node_modules, .git, dist, build y similares.</p>
+                <button>Subir proyecto</button>
+              </form>
+            </div>
           </article>
 
           <article class="panel">

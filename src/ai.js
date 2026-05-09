@@ -305,7 +305,7 @@ function managementToolDefinitions() {
       type: "function",
       function: {
         name: "guardarArchivoProyecto",
-        description: "Guarda codigo, SQL, documentacion o notas dentro del proyecto actual.",
+        description: "Guarda o actualiza codigo, SQL, documentacion o notas dentro del proyecto actual. Si el archivo ya existe, usa el mismo nombre o ruta para reemplazarlo.",
         parameters: {
           type: "object",
           properties: {
@@ -382,6 +382,7 @@ export async function runAiCommand(store, userId, text) {
         "Si la solicitud implica consultar o visualizar datos del sistema, puedes usar tools de base con SQL read-only o tools read-only. " +
         "Si el usuario pide configurar el proyecto, crear tablas, registrar APIs o guardar codigo/documentacion, usa las tools de gestion del proyecto. " +
         "Si el usuario pide crear una base de datos interna y una tabla en la misma instruccion, puedes ejecutar varias tools en secuencia para dejarlo listo. " +
+        "Si el usuario subio un proyecto o quiere modificar codigo existente, primero ubica los archivos con listarArchivosProyecto, revisalos con verArchivoProyecto y guarda el cambio final con guardarArchivoProyecto usando exactamente el mismo nombre o ruta del archivo. " +
         "Si el usuario menciona archivos, codigo, SQL, layouts o documentos cargados en el proyecto, usa primero listarArchivosProyecto y luego verArchivoProyecto. " +
         "Si faltan datos requeridos, responde pidiendolos en espanol. " +
         "Si el usuario quiere ver algo, resume el resultado de forma clara y ordenada.",

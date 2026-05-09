@@ -1,4 +1,35 @@
 const tokenKey = "legacyMcpPortalToken";
+const maxProjectUploadFiles = 160;
+const maxProjectUploadFileSize = 240_000;
+const maxProjectUploadBytes = 4_000_000;
+const ignoredProjectFolders = [
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  "coverage",
+  "vendor",
+  "tmp",
+  "temp",
+  "bin",
+  "obj",
+];
+const projectCodeExtensions = new Set([
+  ".js", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt", ".sql", ".html", ".xml", ".yml", ".yaml",
+  ".css", ".scss", ".less", ".log", ".env", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs",
+  ".swift", ".kt", ".dart", ".vue", ".svelte", ".c", ".cpp", ".h", ".hpp", ".ini", ".toml",
+  ".sh", ".ps1", ".bat", ".cmd", ".csv",
+]);
+const projectCodeNames = new Set([
+  "dockerfile",
+  "makefile",
+  "procfile",
+  ".gitignore",
+  ".npmrc",
+  ".eslintrc",
+  ".prettierrc",
+]);
 const state = {
   token: localStorage.getItem(tokenKey) || "",
   user: null,
@@ -47,6 +78,57 @@ function esc(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function normalizeProjectPath(value) {
+  return String(value || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function projectBaseName(path) {
+  const normalized = normalizeProjectPath(path);
+  return normalized.split("/").pop() || normalized;
+}
+
+function projectExtension(path) {
+  const basename = projectBaseName(path);
+  if (!basename.includes(".")) return "";
+  return `.${basename.split(".").pop().toLowerCase()}`;
+}
+
+function projectKind(path) {
+  const ext = projectExtension(path);
+  if ([".js", ".ts", ".tsx", ".jsx", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs", ".swift", ".kt", ".dart", ".vue", ".svelte", ".c", ".cpp", ".h", ".hpp", ".css", ".scss", ".less", ".sh", ".ps1", ".bat", ".cmd"].includes(ext)) {
+    return "codigo";
+  }
+  if (ext === ".sql") return "sql";
+  if ([".md", ".txt"].includes(ext)) return "documentacion";
+  return "archivo";
+}
+
+function projectMimeType(path, file) {
+  if (file?.type) return file.type;
+  const ext = projectExtension(path);
+  if (ext === ".json") return "application/json";
+  if (ext === ".sql") return "text/sql";
+  if (ext === ".md") return "text/markdown";
+  if ([".html", ".xml", ".svg"].includes(ext)) return "text/plain";
+  return "text/plain";
+}
+
+function isIgnoredProjectPath(path) {
+  const lowered = normalizeProjectPath(path).toLowerCase();
+  if (!lowered) return true;
+  return ignoredProjectFolders.some((segment) => lowered.split("/").includes(segment));
+}
+
+function isUploadableProjectFile(file) {
+  const path = normalizeProjectPath(file.webkitRelativePath || file.name);
+  if (!path || isIgnoredProjectPath(path)) return false;
+  const basename = projectBaseName(path).toLowerCase();
+  const ext = projectExtension(path);
+  return file.type.startsWith("text/")
+    || projectCodeExtensions.has(ext)
+    || projectCodeNames.has(basename);
 }
 
 function friendlyDate(value) {
@@ -813,6 +895,84 @@ $("#resource-form").addEventListener("submit", async (event) => {
     form.reset();
     show({ paso: "Archivo guardado", result });
     await refresh();
+  } catch (err) {
+    show({ error: err.message });
+  }
+});
+
+$("#project-upload-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const selected = Array.from(form.files.files || []);
+    if (!selected.length) {
+      throw new Error("Selecciona la carpeta del proyecto o varios archivos de codigo.");
+    }
+
+    const accepted = [];
+    let skipped = 0;
+    let totalBytes = 0;
+
+    for (const file of selected) {
+      const relativePath = normalizeProjectPath(file.webkitRelativePath || file.name);
+      if (!isUploadableProjectFile(file) || !relativePath) {
+        skipped += 1;
+        continue;
+      }
+      if (file.size === 0 || file.size > maxProjectUploadFileSize) {
+        skipped += 1;
+        continue;
+      }
+      if (accepted.length >= maxProjectUploadFiles) {
+        skipped += 1;
+        continue;
+      }
+      if (totalBytes + file.size > maxProjectUploadBytes) {
+        skipped += 1;
+        continue;
+      }
+
+      totalBytes += file.size;
+      accepted.push({ file, relativePath });
+    }
+
+    if (!accepted.length) {
+      throw new Error("No encontre archivos de texto o codigo compatibles para importar.");
+    }
+
+    const files = [];
+    for (const entry of accepted) {
+      const content = await entry.file.text();
+      if (!content.trim()) {
+        skipped += 1;
+        continue;
+      }
+      files.push({
+        name: entry.relativePath,
+        kind: projectKind(entry.relativePath),
+        description: `Archivo importado desde el proyecto ${entry.relativePath.split("/")[0] || "cargado"}.`,
+        mimeType: projectMimeType(entry.relativePath, entry.file),
+        content,
+      });
+    }
+
+    if (!files.length) {
+      throw new Error("Los archivos seleccionados estan vacios o no son compatibles.");
+    }
+
+    const rootName = files[0].name.split("/")[0] || state.project?.title || "proyecto";
+    const result = await api("/api/resources/import-project", {
+      method: "POST",
+      body: JSON.stringify({ rootName, files }),
+    });
+
+    state.resourceView = result.manifest || null;
+    form.reset();
+    await refresh();
+    show({
+      paso: `Proyecto cargado: ${result.fileCount} archivos listos para ChatGPT.${skipped ? ` ${skipped} omitidos.` : ""}`,
+      result,
+    });
   } catch (err) {
     show({ error: err.message });
   }

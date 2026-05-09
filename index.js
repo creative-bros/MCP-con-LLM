@@ -17,7 +17,7 @@ const store = createStore();
 
 app.set("trust proxy", true);
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "8mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -699,6 +699,10 @@ app.delete("/api/tables/:tableName/rows/:rowId", authRequired, asyncRoute(async 
 
 app.post("/api/resources", authRequired, (req, res) => {
   res.status(201).json(store.saveResource(req.user.id, req.body || {}));
+});
+
+app.post("/api/resources/import-project", authRequired, (req, res) => {
+  res.status(201).json(store.importProjectResources(req.user.id, req.body || {}));
 });
 
 app.get("/api/resources/:resourceId", authRequired, (req, res) => {

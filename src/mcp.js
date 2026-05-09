@@ -67,7 +67,7 @@ function resourceListToolToMcp() {
     title: "Listar archivos del proyecto",
     description:
       "Lista los archivos, notas, codigo, SQL o contexto cargado dentro del proyecto. " +
-      "Usa esta tool cuando el usuario mencione un archivo, documento, layout, script, consulta o quiera saber que material esta disponible.",
+      "Usa esta tool cuando el usuario mencione un archivo, documento, layout, script, consulta, proyecto cargado o quiera saber que material esta disponible.",
     inputSchema: {
       type: "object",
       properties: {
@@ -94,7 +94,7 @@ function resourceReadToolToMcp() {
     title: "Abrir archivo del proyecto",
     description:
       "Abre el contenido completo de un archivo o nota del proyecto. " +
-      "Usa esta tool cuando el usuario pida revisar, entender, resumir o ejecutar algo a partir de un archivo cargado.",
+      "Usa esta tool cuando el usuario pida revisar, entender, resumir, corregir o ejecutar algo a partir de un archivo cargado.",
     inputSchema: {
       type: "object",
       properties: {
@@ -560,7 +560,7 @@ function resourceWriteToolToMcp() {
     title: "Guardar archivo del proyecto",
     description:
       "Crea o actualiza un archivo, nota, SQL, codigo o documento textual dentro del proyecto. " +
-      "Usa esta tool cuando el usuario quiera generar codigo, guardar reglas o subir contexto para que luego ChatGPT lo reconozca.",
+      "Usa esta tool cuando el usuario quiera generar codigo, actualizar un archivo existente por nombre o ruta, guardar reglas o subir contexto para que luego ChatGPT lo reconozca.",
     inputSchema: {
       type: "object",
       properties: {
@@ -676,6 +676,7 @@ function initializeInstructions(store, userId, projectKey = "") {
     "Si el usuario quiere visualizar o revisar informacion, usa una tool read-only o una tool de base y luego presenta el resultado de forma clara.",
     "Si el usuario pregunta que se puede hacer o como ver algo, usa primero la tool guiaProyecto.",
     "Si el usuario pide configurar el proyecto, crear tablas, registrar APIs, documentar una base o guardar codigo/archivos, usa las tools de configuracion del proyecto.",
+    "Si el usuario subio un proyecto o quiere modificar codigo existente, usa listarArchivosProyecto para ubicar archivos, verArchivoProyecto para leerlos y guardarArchivoProyecto con el mismo nombre o ruta para actualizarlos.",
     "Si el usuario menciona un archivo, documento, SQL, codigo o contexto cargado en el proyecto, usa listarArchivosProyecto y luego verArchivoProyecto.",
     "Si el usuario pide confirmar que ya se ejecuto algo o quiere ver cambios recientes, usa actividadProyecto.",
     "Para SQL solo se permite SELECT/WITH.",

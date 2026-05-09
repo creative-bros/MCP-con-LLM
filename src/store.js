@@ -7,6 +7,8 @@ const dataFile = path.join(process.cwd(), "data", "portal.json");
 const defaultModel = "gpt-4.1-mini";
 const maxResourceContentLength = 250_000;
 const maxActivityEntries = 80;
+const maxProjectImportFiles = 160;
+const maxProjectImportBytes = 4_000_000;
 const oauthCodeLifetimeMs = 10 * 60 * 1000;
 const oauthTokenLifetimeMs = 12 * 60 * 60 * 1000;
 
@@ -59,6 +61,25 @@ function clipText(value, size = 220) {
 
 function resourcePreview(value, size = 180) {
   return clipText(String(value || "").replace(/\s+/g, " "), size);
+}
+
+function resourceNameKey(value) {
+  return String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+}
+
+function resourceKindFromName(name) {
+  const normalized = String(name || "").trim().replace(/\\/g, "/");
+  const basename = normalized.split("/").pop() || normalized;
+  const ext = basename.includes(".") ? `.${basename.split(".").pop().toLowerCase()}` : "";
+  if ([".js", ".ts", ".tsx", ".jsx", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs", ".swift", ".kt", ".dart", ".c", ".cpp", ".h", ".hpp", ".vue", ".svelte", ".css", ".scss", ".less", ".sh", ".ps1", ".bat", ".cmd"].includes(ext)) {
+    return "codigo";
+  }
+  if ([".sql"].includes(ext)) return "sql";
+  if ([".md", ".txt", ".rst", ".adoc"].includes(ext)) return "documentacion";
+  if ([".json", ".yml", ".yaml", ".toml", ".ini", ".env", ".xml", ".html", ".csv", ".log"].includes(ext)) {
+    return "archivo";
+  }
+  return "archivo";
 }
 
 function sha256Base64Url(value) {
@@ -415,6 +436,28 @@ function summarizeResource(resource, includeContent = false) {
   };
 }
 
+function findResourceByName(project, name) {
+  const target = resourceNameKey(name);
+  return (project.resources || []).find((resource) => resourceNameKey(resource.name) === target) || null;
+}
+
+function upsertProjectResource(project, input) {
+  const existingById = input.id
+    ? (project.resources || []).find((resource) => resource.id === String(input.id).trim())
+    : null;
+  const existingByName = input.name ? findResourceByName(project, input.name) : null;
+  const previous = existingById || existingByName || null;
+  const resource = normalizeResource({
+    ...input,
+    kind: input.kind || previous?.kind || resourceKindFromName(input.name),
+  }, previous || {});
+  resource.updatedAt = new Date().toISOString();
+  project.resources = (project.resources || []).filter((item) => item.id !== resource.id);
+  project.resources.unshift(resource);
+  project.updatedAt = new Date().toISOString();
+  return { resource, previous };
+}
+
 function pushActivity(project, input) {
   project.activity ||= [];
   const entry = normalizeActivity(input);
@@ -550,7 +593,7 @@ function projectGuide(user, project, options = {}) {
     rules: table.rules || "",
   }));
 
-  const resources = (project.resources || []).map((resource) => ({
+  const resources = (project.resources || []).slice(0, 60).map((resource) => ({
     id: resource.id,
     name: resource.name,
     kind: resource.kind,
@@ -658,6 +701,7 @@ function projectGuide(user, project, options = {}) {
     availableDatabases: databases,
     internalTables: tables,
     projectResources: resources,
+    projectResourceCount: project.resources?.length || 0,
     recommendedTools,
     bestMatches: matches,
     examplePrompts: [
@@ -1071,8 +1115,10 @@ function findResource(project, identifier) {
   const target = String(identifier || "").trim();
   const byId = (project.resources || []).find((resource) => resource.id === target);
   if (byId) return byId;
-  const byName = (project.resources || []).find((resource) => slug(resource.name, resource.name) === slug(target, target));
+  const byName = findResourceByName(project, target);
   if (byName) return byName;
+  const bySlug = (project.resources || []).find((resource) => slug(resource.name, resource.name) === slug(target, target));
+  if (bySlug) return bySlug;
   throw new Error(`Archivo o nota no encontrado: ${identifier}`);
 }
 
@@ -1696,12 +1742,7 @@ export function createStore() {
       return mutate((data) => {
         const user = ensureUser(data, userId);
         const project = ensureProject(user, projectRef);
-        const previous = input.id ? (project.resources || []).find((item) => item.id === input.id) : null;
-        const resource = normalizeResource(input, previous || {});
-        resource.updatedAt = new Date().toISOString();
-        project.resources = (project.resources || []).filter((item) => item.id !== resource.id);
-        project.resources.unshift(resource);
-        project.updatedAt = new Date().toISOString();
+        const { resource, previous } = upsertProjectResource(project, input);
         pushActivity(project, {
           type: "archivo",
           title: previous ? "Archivo actualizado" : "Archivo cargado",
@@ -1709,6 +1750,86 @@ export function createStore() {
           meta: { resourceId: resource.id, name: resource.name, kind: resource.kind },
         });
         return summarizeResource(resource, true);
+      });
+    },
+
+    importProjectResources(userId, payload, projectRef = "") {
+      return mutate((data) => {
+        const user = ensureUser(data, userId);
+        const project = ensureProject(user, projectRef);
+        const files = Array.isArray(payload?.files) ? payload.files : [];
+        if (!files.length) throw new Error("Selecciona al menos un archivo del proyecto.");
+        if (files.length > maxProjectImportFiles) {
+          throw new Error(`Por ahora solo se importan hasta ${maxProjectImportFiles} archivos por proyecto.`);
+        }
+
+        const rootName = String(payload?.rootName || project.title || "proyecto").trim().replace(/\\/g, "/");
+        let totalBytes = 0;
+        let createdCount = 0;
+        let updatedCount = 0;
+        const saved = [];
+
+        for (const file of files) {
+          const content = String(file?.content || "");
+          const bytes = Buffer.byteLength(content, "utf8");
+          totalBytes += bytes;
+          if (totalBytes > maxProjectImportBytes) {
+            throw new Error(`El proyecto supera el limite de ${(maxProjectImportBytes / 1_000_000).toFixed(1)} MB de texto.`);
+          }
+
+          const { resource, previous } = upsertProjectResource(project, {
+            name: String(file?.name || "").trim().replace(/\\/g, "/"),
+            kind: file?.kind || resourceKindFromName(file?.name || ""),
+            description: file?.description || `Archivo importado desde el proyecto ${rootName}.`,
+            mimeType: file?.mimeType || "text/plain",
+            content,
+          });
+
+          if (previous) updatedCount += 1;
+          else createdCount += 1;
+
+          saved.push({
+            name: resource.name,
+            kind: resource.kind,
+            size: resource.size,
+            updatedAt: resource.updatedAt,
+          });
+        }
+
+        const manifest = upsertProjectResource(project, {
+          name: `${rootName}/__mcp_project_manifest.json`,
+          kind: "documentacion",
+          description: `Indice del proyecto ${rootName} cargado para que ChatGPT reconozca su estructura.`,
+          mimeType: "application/json",
+          content: JSON.stringify({
+            rootName,
+            importedAt: nowIso(),
+            fileCount: saved.length,
+            files: saved,
+          }, null, 2),
+        }).resource;
+
+        pushActivity(project, {
+          type: "archivo",
+          title: "Proyecto cargado",
+          summary: `Se importaron ${saved.length} archivos del proyecto ${rootName}.`,
+          meta: {
+            rootName,
+            fileCount: saved.length,
+            createdCount,
+            updatedCount,
+          },
+        });
+
+        return {
+          ok: true,
+          rootName,
+          fileCount: saved.length,
+          createdCount,
+          updatedCount,
+          manifest: summarizeResource(manifest),
+          files: saved.slice(0, 40),
+        };
       });
     },
 

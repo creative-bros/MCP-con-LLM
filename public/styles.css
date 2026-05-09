@@ -939,6 +939,12 @@ th {
   border-top: 1px solid rgba(37, 49, 60, 0.08);
 }
 
+.helper-copy {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .resource-title {
   display: flex;
   align-items: center;
