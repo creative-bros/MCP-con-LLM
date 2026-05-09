@@ -175,27 +175,6 @@ fernando@email.com
               <label>URL base del sistema opcional <input name="apiBaseUrl" placeholder="https://tu-sistema.com/api" /></label>
               <button>Guardar proyecto</button>
             </form>
-          </article>
-
-          <article class="panel panel-accent">
-            <div class="panel-head">
-              <div>
-                <h2>Proyecto activo</h2>
-                <p id="project-summary">Selecciona el sistema que quieres exponer en el MCP y que ChatGPT va a operar.</p>
-              </div>
-            </div>
-
-            <div class="project-focus">
-              <strong id="project-title">Sin proyecto</strong>
-              <p id="project-context" class="subtle">Todo lo que registres abajo se guarda dentro del proyecto activo.</p>
-            </div>
-
-            <label>
-              Abrir proyecto
-              <select id="project-select"></select>
-            </label>
-
-            <div id="project-cards" class="list project-list"></div>
 
             <div class="panel-subsection">
               <div class="panel-head">
@@ -210,7 +189,7 @@ fernando@email.com
                   Carpeta del proyecto
                   <input name="files" type="file" webkitdirectory directory multiple />
                 </label>
-                <p class="helper-copy">Se importan archivos de texto y codigo comunes. Se omiten node_modules, .git, dist, build y similares.</p>
+                <p class="helper-copy">Se recorren los archivos del proyecto completo. Solo se omiten carpetas tecnicas como node_modules, .git, dist, build y similares.</p>
                 <button>Subir proyecto</button>
               </form>
 
@@ -247,6 +226,27 @@ fernando@email.com
                 <pre id="resource-preview">Selecciona un archivo o nota para ver su contenido.</pre>
               </div>
             </div>
+          </article>
+
+          <article class="panel panel-accent">
+            <div class="panel-head">
+              <div>
+                <h2>Proyecto activo</h2>
+                <p id="project-summary">Selecciona el sistema que quieres exponer en el MCP y que ChatGPT va a operar.</p>
+              </div>
+            </div>
+
+            <div class="project-focus">
+              <strong id="project-title">Sin proyecto</strong>
+              <p id="project-context" class="subtle">Todo lo que registres abajo se guarda dentro del proyecto activo.</p>
+            </div>
+
+            <label>
+              Abrir proyecto
+              <select id="project-select"></select>
+            </label>
+
+            <div id="project-cards" class="list project-list"></div>
           </article>
         </section>
 

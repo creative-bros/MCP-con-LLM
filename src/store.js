@@ -5,10 +5,10 @@ import mysql from "mysql2/promise";
 
 const dataFile = path.join(process.cwd(), "data", "portal.json");
 const defaultModel = "gpt-4.1-mini";
-const maxResourceContentLength = 250_000;
+const maxResourceContentLength = 1_500_000;
 const maxActivityEntries = 80;
-const maxProjectImportFiles = 160;
-const maxProjectImportBytes = 4_000_000;
+const maxProjectImportFiles = 500;
+const maxProjectImportBytes = 12_000_000;
 const oauthCodeLifetimeMs = 10 * 60 * 1000;
 const oauthTokenLifetimeMs = 12 * 60 * 60 * 1000;
 
@@ -60,6 +60,9 @@ function clipText(value, size = 220) {
 }
 
 function resourcePreview(value, size = 180) {
+  if (String(value || "").startsWith("data:")) {
+    return "[asset binario cargado]";
+  }
   return clipText(String(value || "").replace(/\s+/g, " "), size);
 }
 
@@ -74,6 +77,7 @@ function resourceKindFromName(name) {
   if ([".js", ".ts", ".tsx", ".jsx", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs", ".swift", ".kt", ".dart", ".c", ".cpp", ".h", ".hpp", ".vue", ".svelte", ".css", ".scss", ".less", ".sh", ".ps1", ".bat", ".cmd"].includes(ext)) {
     return "codigo";
   }
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"].includes(ext)) return "asset";
   if ([".sql"].includes(ext)) return "sql";
   if ([".md", ".txt", ".rst", ".adoc"].includes(ext)) return "documentacion";
   if ([".json", ".yml", ".yaml", ".toml", ".ini", ".env", ".xml", ".html", ".csv", ".log"].includes(ext)) {

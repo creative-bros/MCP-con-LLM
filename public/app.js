@@ -1,7 +1,8 @@
 const tokenKey = "legacyMcpPortalToken";
-const maxProjectUploadFiles = 160;
-const maxProjectUploadFileSize = 240_000;
-const maxProjectUploadBytes = 4_000_000;
+const maxProjectUploadFiles = 500;
+const maxProjectUploadFileSize = 1_500_000;
+const maxProjectUploadBytes = 12_000_000;
+const maxInlineImageFileSize = 450_000;
 const ignoredProjectFolders = [
   "node_modules",
   ".git",
@@ -30,6 +31,13 @@ const projectCodeNames = new Set([
   ".eslintrc",
   ".prettierrc",
 ]);
+const textProjectExtensions = new Set([
+  ".js", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt", ".sql", ".html", ".xml", ".yml", ".yaml",
+  ".css", ".scss", ".less", ".log", ".env", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs",
+  ".swift", ".kt", ".dart", ".vue", ".svelte", ".c", ".cpp", ".h", ".hpp", ".ini", ".toml",
+  ".sh", ".ps1", ".bat", ".cmd", ".csv", ".svg",
+]);
+const imageProjectExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"]);
 const state = {
   token: localStorage.getItem(tokenKey) || "",
   user: null,
@@ -101,6 +109,7 @@ function projectKind(path) {
   if ([".js", ".ts", ".tsx", ".jsx", ".php", ".py", ".java", ".cs", ".go", ".rb", ".rs", ".swift", ".kt", ".dart", ".vue", ".svelte", ".c", ".cpp", ".h", ".hpp", ".css", ".scss", ".less", ".sh", ".ps1", ".bat", ".cmd"].includes(ext)) {
     return "codigo";
   }
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg"].includes(ext)) return "asset";
   if (ext === ".sql") return "sql";
   if ([".md", ".txt"].includes(ext)) return "documentacion";
   return "archivo";
@@ -129,11 +138,43 @@ function isIgnoredProjectPath(path) {
 function isUploadableProjectFile(file) {
   const path = normalizeProjectPath(file.webkitRelativePath || file.name);
   if (!path || isIgnoredProjectPath(path)) return false;
+  return true;
+}
+
+function isTextProjectFile(file, path) {
   const basename = projectBaseName(path).toLowerCase();
   const ext = projectExtension(path);
   return file.type.startsWith("text/")
+    || file.type.includes("json")
+    || file.type.includes("javascript")
+    || file.type.includes("xml")
     || projectCodeExtensions.has(ext)
+    || textProjectExtensions.has(ext)
     || projectCodeNames.has(basename);
+}
+
+function isImageProjectFile(path) {
+  const ext = projectExtension(path);
+  return imageProjectExtensions.has(ext);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`No pude leer ${file.name} como binario.`));
+    reader.readAsDataURL(file);
+  });
+}
+
+function binaryPlaceholder(path, file) {
+  return [
+    "[binary file]",
+    `path: ${path}`,
+    `mimeType: ${file.type || "application/octet-stream"}`,
+    `size: ${Number(file.size || 0).toLocaleString("es-MX")} bytes`,
+    "content omitted from text context",
+  ].join("\n");
 }
 
 function friendlyDate(value) {
@@ -599,6 +640,9 @@ function resolveResourceReference(baseName, rawTarget) {
 
 async function buildRenderablePreview(resource) {
   if (!resource?.content) return "";
+  if ((resource.mimeType || "").startsWith("image/") && String(resource.content).startsWith("data:")) {
+    return `<!doctype html><html><body style="margin:0;display:grid;place-items:center;background:#f6f6f6;"><img src="${resource.content}" alt="${esc(resource.name || "asset")}" style="max-width:100%;height:auto;" /></body></html>`;
+  }
   if (/\.svg$/i.test(resource.name || "")) return resource.content;
   if (!/\.html?$/i.test(resource.name || "")) return "";
 
@@ -652,9 +696,13 @@ async function updateResourcePreview() {
 
   $("#resource-preview-name").textContent = resource.name || "Archivo";
   meta.textContent = `${resource.kind || "archivo"} | ${resource.mimeType || "text/plain"} | ${friendlyDate(resource.updatedAt)}`;
-  preview.textContent = resource.content || "";
+  preview.textContent = String(resource.content || "").startsWith("data:")
+    ? `[asset binario] ${resource.name || ""}`
+    : (resource.content || "");
 
-  if (!/\.(html?|svg)$/i.test(resource.name || "")) {
+  const canRender = /\.(html?|svg)$/i.test(resource.name || "")
+    || ((resource.mimeType || "").startsWith("image/") && String(resource.content || "").startsWith("data:"));
+  if (!canRender) {
     iframe.srcdoc = "";
     iframeWrap.classList.add("hidden");
     return;
@@ -1074,7 +1122,7 @@ $("#project-upload-form").addEventListener("submit", async (event) => {
         skipped += 1;
         continue;
       }
-      if (file.size === 0 || file.size > maxProjectUploadFileSize) {
+      if (file.size === 0) {
         skipped += 1;
         continue;
       }
@@ -1082,12 +1130,12 @@ $("#project-upload-form").addEventListener("submit", async (event) => {
         skipped += 1;
         continue;
       }
-      if (totalBytes + file.size > maxProjectUploadBytes) {
+      if (totalBytes + Math.min(file.size, maxProjectUploadFileSize) > maxProjectUploadBytes) {
         skipped += 1;
         continue;
       }
 
-      totalBytes += file.size;
+      totalBytes += Math.min(file.size, maxProjectUploadFileSize);
       accepted.push({ file, relativePath });
     }
 
@@ -1097,16 +1145,30 @@ $("#project-upload-form").addEventListener("submit", async (event) => {
 
     const files = [];
     for (const entry of accepted) {
-      const content = await entry.file.text();
-      if (!content.trim()) {
+      let content = "";
+      let mimeType = projectMimeType(entry.relativePath, entry.file);
+      const textFile = isTextProjectFile(entry.file, entry.relativePath);
+      const imageFile = isImageProjectFile(entry.relativePath);
+
+      if (textFile && entry.file.size <= maxProjectUploadFileSize) {
+        content = await entry.file.text();
+      } else if (imageFile && entry.file.size <= maxInlineImageFileSize) {
+        content = await readFileAsDataUrl(entry.file);
+      } else {
+        content = binaryPlaceholder(entry.relativePath, entry.file);
+        mimeType = mimeType || "application/octet-stream";
+      }
+
+      if (!String(content).trim()) {
         skipped += 1;
         continue;
       }
+
       files.push({
         name: entry.relativePath,
         kind: projectKind(entry.relativePath),
         description: `Archivo importado desde el proyecto ${entry.relativePath.split("/")[0] || "cargado"}.`,
-        mimeType: projectMimeType(entry.relativePath, entry.file),
+        mimeType,
         content,
       });
     }
