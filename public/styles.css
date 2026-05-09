@@ -949,6 +949,21 @@ th {
   line-height: 1.55;
 }
 
+.render-wrap {
+  margin-top: 12px;
+  border: 1px solid rgba(37, 49, 60, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+#resource-render {
+  width: 100%;
+  min-height: 420px;
+  border: 0;
+  background: #ffffff;
+}
+
 .resource-title {
   display: flex;
   align-items: center;
@@ -982,6 +997,25 @@ th {
 .activity-item p {
   margin: 8px 0 10px;
   color: var(--ink);
+}
+
+.activity-diff {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.activity-diff strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink);
+}
+
+.activity-diff pre {
+  min-height: 0;
+  max-height: 160px;
+  margin: 0;
+  padding: 12px;
 }
 
 .activity-type {

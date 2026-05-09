@@ -196,6 +196,57 @@ fernando@email.com
             </label>
 
             <div id="project-cards" class="list project-list"></div>
+
+            <div class="panel-subsection">
+              <div class="panel-head">
+                <div>
+                  <h3>Proyecto y archivos cargados</h3>
+                  <p>Aqui subes el proyecto y aqui mismo ves sus archivos, cambios y vista previa.</p>
+                </div>
+              </div>
+
+              <form id="project-upload-form" class="form">
+                <label>
+                  Carpeta del proyecto
+                  <input name="files" type="file" webkitdirectory directory multiple />
+                </label>
+                <p class="helper-copy">Se importan archivos de texto y codigo comunes. Se omiten node_modules, .git, dist, build y similares.</p>
+                <button>Subir proyecto</button>
+              </form>
+
+              <form id="resource-form" class="form">
+                <div class="two">
+                  <label>Nombre <input name="name" placeholder="polizas.sql o reglas-clientes.md" /></label>
+                  <label>Tipo
+                    <select name="kind">
+                      <option value="archivo">Archivo</option>
+                      <option value="documentacion">Documentacion</option>
+                      <option value="sql">SQL</option>
+                      <option value="codigo">Codigo</option>
+                      <option value="nota">Nota</option>
+                    </select>
+                  </label>
+                </div>
+                <label>Descripcion <textarea name="description" rows="3" placeholder="Este archivo explica como se consulta el estatus de una poliza y que tablas se relacionan."></textarea></label>
+                <label>Archivo de texto opcional <input name="file" type="file" accept=".txt,.md,.json,.csv,.sql,.js,.ts,.tsx,.jsx,.html,.xml,.yml,.yaml,.log" /></label>
+                <label>Contenido manual <textarea name="content" rows="8" placeholder="Pega aqui reglas, SQL, codigo o cualquier contexto que el chat debe reconocer dentro del proyecto."></textarea></label>
+                <button>Guardar archivo o nota</button>
+              </form>
+
+              <div id="resources" class="list"></div>
+
+              <div class="panel-subsection">
+                <div class="item-row">
+                  <strong>Vista del cambio</strong>
+                  <small id="resource-preview-name">Sin archivo seleccionado</small>
+                </div>
+                <small id="resource-preview-meta" class="helper-copy">Selecciona un archivo del proyecto para ver su contenido o su resultado visual.</small>
+                <div id="resource-render-wrap" class="render-wrap hidden">
+                  <iframe id="resource-render" title="Vista del recurso cargado"></iframe>
+                </div>
+                <pre id="resource-preview">Selecciona un archivo o nota para ver su contenido.</pre>
+              </div>
+            </div>
           </article>
         </section>
 
@@ -500,78 +551,6 @@ fernando@email.com
           </div>
 
           <div id="tables" class="table-grid"></div>
-        </section>
-
-        <section class="section-copy">
-          <p class="eyebrow">Archivos</p>
-          <h2>Carga documentos, consultas, codigo o notas para que ChatGPT tambien los reconozca</h2>
-        </section>
-
-        <section class="workspace-grid">
-          <article class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Archivos y contexto</h2>
-                <p>Sube archivos de texto, scripts, SQL, JSON o pega notas operativas del proyecto.</p>
-              </div>
-            </div>
-
-            <form id="resource-form" class="form">
-              <div class="two">
-                <label>Nombre <input name="name" placeholder="polizas.sql o reglas-clientes.md" /></label>
-                <label>Tipo
-                  <select name="kind">
-                    <option value="archivo">Archivo</option>
-                    <option value="documentacion">Documentacion</option>
-                    <option value="sql">SQL</option>
-                    <option value="codigo">Codigo</option>
-                    <option value="nota">Nota</option>
-                  </select>
-                </label>
-              </div>
-              <label>Descripcion <textarea name="description" rows="3" placeholder="Este archivo explica como se consulta el estatus de una poliza y que tablas se relacionan."></textarea></label>
-              <label>Archivo de texto opcional <input name="file" type="file" accept=".txt,.md,.json,.csv,.sql,.js,.ts,.tsx,.jsx,.html,.xml,.yml,.yaml,.log" /></label>
-              <label>Contenido manual <textarea name="content" rows="8" placeholder="Pega aqui reglas, SQL, codigo o cualquier contexto que el chat debe reconocer dentro del proyecto."></textarea></label>
-              <button>Guardar archivo o nota</button>
-            </form>
-
-            <div class="panel-subsection">
-              <div class="panel-head">
-                <div>
-                  <h3>Subir proyecto completo</h3>
-                  <p>Selecciona la carpeta del sistema para cargar sus archivos de codigo y que ChatGPT los pueda leer o actualizar desde el chat.</p>
-                </div>
-              </div>
-
-              <form id="project-upload-form" class="form">
-                <label>
-                  Carpeta del proyecto
-                  <input name="files" type="file" webkitdirectory directory multiple />
-                </label>
-                <p class="helper-copy">Se importan archivos de texto y codigo comunes. Se omiten carpetas pesadas como node_modules, .git, dist, build y similares.</p>
-                <button>Subir proyecto</button>
-              </form>
-            </div>
-          </article>
-
-          <article class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>Material cargado</h2>
-                <p>Todo lo que subas aqui se vuelve contexto visible para el MCP del proyecto.</p>
-              </div>
-            </div>
-
-            <div id="resources" class="list"></div>
-
-            <div class="panel-subsection">
-              <div class="item-row">
-                <strong>Vista previa</strong>
-                <small id="resource-preview-name">Sin archivo seleccionado</small>
-              </div>
-              <pre id="resource-preview">Selecciona un archivo o nota para ver su contenido.</pre>
-            </div>
-          </article>
         </section>
 
         <section class="section-copy">

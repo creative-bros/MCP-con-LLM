@@ -49,6 +49,7 @@ const state = {
 let flashTimer = null;
 let createProjectMode = false;
 let editingProjectId = "";
+let previewTicket = 0;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -113,6 +114,10 @@ function projectMimeType(path, file) {
   if (ext === ".md") return "text/markdown";
   if ([".html", ".xml", ".svg"].includes(ext)) return "text/plain";
   return "text/plain";
+}
+
+function resourceLabel(name) {
+  return normalizeProjectPath(name) || String(name || "");
 }
 
 function isIgnoredProjectPath(path) {
@@ -230,6 +235,15 @@ function totalRows() {
 
 function uploadedProjectManifest() {
   return state.resources.find((resource) => resource.isProjectManifest) || null;
+}
+
+function visibleResources() {
+  return state.resources.filter((resource) => !resource.isProjectManifest);
+}
+
+function findResourceSummaryByName(name) {
+  const target = normalizeProjectPath(name);
+  return state.resources.find((resource) => normalizeProjectPath(resource.name) === target) || null;
 }
 
 function nextStep() {
@@ -445,16 +459,18 @@ function renderTables() {
 }
 
 function renderResources() {
-  $("#resources").innerHTML = state.resources.length
-    ? state.resources.map((resource) => `
+  const resources = visibleResources();
+  $("#resources").innerHTML = resources.length
+    ? resources.map((resource) => `
       <article class="item">
         <div class="item-row">
           <div class="resource-title">
-            <strong>${esc(resource.name)}</strong>
+            <strong>${esc(resourceLabel(resource.name))}</strong>
             <span class="resource-kicker">${esc(resource.kind)}</span>
           </div>
           <div class="resource-actions">
             <button class="ghost" data-resource-view="${esc(resource.id)}" type="button">Ver</button>
+            ${/\.(html?|svg)$/i.test(resource.name) ? `<button class="ghost" data-resource-preview="${esc(resource.id)}" type="button">Vista</button>` : ""}
             <button class="ghost" data-resource-use="${esc(resource.name)}" type="button">Usar en chat</button>
             <button class="ghost" data-resource-delete="${esc(resource.id)}" type="button">Eliminar</button>
           </div>
@@ -467,7 +483,6 @@ function renderResources() {
     : '<div class="item"><small>Aun no hay archivos o notas dentro del proyecto.</small></div>';
 
   $("#resource-preview-name").textContent = state.resourceView?.name || "Sin archivo seleccionado";
-  $("#resource-preview").textContent = state.resourceView?.content || "Selecciona un archivo o nota para ver su contenido.";
 }
 
 function renderActivity() {
@@ -482,6 +497,14 @@ function renderActivity() {
           <span class="activity-type">${esc(item.type || "evento")}</span>
         </div>
         <p>${esc(item.summary || "Sin resumen.")}</p>
+        ${item.meta?.name ? `<div class="chips"><span class="chip">archivo: ${esc(item.meta.name)}</span></div>` : ""}
+        ${item.meta?.beforePreview || item.meta?.afterPreview ? `
+          <div class="activity-diff">
+            ${item.meta.beforePreview ? `<div><strong>Antes</strong><pre>${esc(item.meta.beforePreview)}</pre></div>` : ""}
+            ${item.meta.afterPreview ? `<div><strong>Despues</strong><pre>${esc(item.meta.afterPreview)}</pre></div>` : ""}
+          </div>
+        ` : ""}
+        ${item.meta?.resourceId ? `<button class="ghost" data-activity-resource="${esc(item.meta.resourceId)}" type="button">Ver cambio</button>` : ""}
       </article>
     `).join("")
     : '<div class="item"><small>Aun no hay actividad en este proyecto.</small></div>';
@@ -549,6 +572,106 @@ function collectRowPayload(form, tableName) {
   return payload;
 }
 
+async function fetchResourceFull(resourceId) {
+  return api(`/api/resources/${encodeURIComponent(resourceId)}`);
+}
+
+async function loadResourceFull(resourceId) {
+  const full = await fetchResourceFull(resourceId);
+  state.resourceView = full;
+  return full;
+}
+
+function resolveResourceReference(baseName, rawTarget) {
+  const target = String(rawTarget || "").trim();
+  if (!target || target.startsWith("#") || /^[a-z]+:/i.test(target) || target.startsWith("//")) return null;
+  const base = normalizeProjectPath(baseName);
+  const baseDir = base.includes("/") ? base.slice(0, base.lastIndexOf("/") + 1) : "";
+  const normalized = new URL(target, `https://preview.local/${baseDir}`).pathname.replace(/^\/+/, "");
+  const direct = findResourceSummaryByName(normalized);
+  if (direct) return direct;
+  const manifest = uploadedProjectManifest();
+  if (manifest?.projectRootName) {
+    return findResourceSummaryByName(`${manifest.projectRootName}/${normalized}`);
+  }
+  return null;
+}
+
+async function buildRenderablePreview(resource) {
+  if (!resource?.content) return "";
+  if (/\.svg$/i.test(resource.name || "")) return resource.content;
+  if (!/\.html?$/i.test(resource.name || "")) return "";
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(resource.content, "text/html");
+
+  for (const link of Array.from(doc.querySelectorAll('link[rel="stylesheet"][href]'))) {
+    const summary = resolveResourceReference(resource.name, link.getAttribute("href"));
+    if (!summary) continue;
+    const full = summary.id === resource.id ? resource : await fetchResourceFull(summary.id);
+    const style = doc.createElement("style");
+    style.setAttribute("data-source", summary.name);
+    style.textContent = full.content || "";
+    link.replaceWith(style);
+  }
+
+  for (const script of Array.from(doc.querySelectorAll("script[src]"))) {
+    const summary = resolveResourceReference(resource.name, script.getAttribute("src"));
+    if (!summary) continue;
+    const full = summary.id === resource.id ? resource : await fetchResourceFull(summary.id);
+    const inline = doc.createElement("script");
+    inline.textContent = full.content || "";
+    script.replaceWith(inline);
+  }
+
+  for (const image of Array.from(doc.querySelectorAll("img[src]"))) {
+    const summary = resolveResourceReference(resource.name, image.getAttribute("src"));
+    if (!summary || !/\.svg$/i.test(summary.name)) continue;
+    const full = await fetchResourceFull(summary.id);
+    image.setAttribute("src", `data:image/svg+xml;charset=utf-8,${encodeURIComponent(full.content || "")}`);
+  }
+
+  return "<!doctype html>\n" + doc.documentElement.outerHTML;
+}
+
+async function updateResourcePreview() {
+  const ticket = ++previewTicket;
+  const resource = state.resourceView;
+  const iframeWrap = $("#resource-render-wrap");
+  const iframe = $("#resource-render");
+  const preview = $("#resource-preview");
+  const meta = $("#resource-preview-meta");
+
+  if (!resource) {
+    iframe.srcdoc = "";
+    iframeWrap.classList.add("hidden");
+    preview.textContent = "Selecciona un archivo o nota para ver su contenido.";
+    meta.textContent = "Selecciona un archivo del proyecto para ver su contenido o su resultado visual.";
+    return;
+  }
+
+  $("#resource-preview-name").textContent = resource.name || "Archivo";
+  meta.textContent = `${resource.kind || "archivo"} | ${resource.mimeType || "text/plain"} | ${friendlyDate(resource.updatedAt)}`;
+  preview.textContent = resource.content || "";
+
+  if (!/\.(html?|svg)$/i.test(resource.name || "")) {
+    iframe.srcdoc = "";
+    iframeWrap.classList.add("hidden");
+    return;
+  }
+
+  const rendered = await buildRenderablePreview(resource);
+  if (ticket !== previewTicket) return;
+  if (!rendered) {
+    iframe.srcdoc = "";
+    iframeWrap.classList.add("hidden");
+    return;
+  }
+
+  iframe.srcdoc = rendered;
+  iframeWrap.classList.remove("hidden");
+}
+
 function render() {
   const logged = Boolean(state.user && state.token);
   authVisible(logged);
@@ -605,12 +728,21 @@ function render() {
   }
   renderResources();
   renderActivity();
+  updateResourcePreview().catch((err) => show({ error: err.message }));
 }
 
 async function refresh() {
+  const currentResourceId = state.resourceView?.id || "";
   const data = await api("/api/state");
   Object.assign(state, data);
   state.user = data.user;
+  if (currentResourceId && state.resources.some((resource) => resource.id === currentResourceId)) {
+    try {
+      await loadResourceFull(currentResourceId);
+    } catch {
+      state.resourceView = null;
+    }
+  }
   render();
 }
 
@@ -910,10 +1042,14 @@ $("#resource-form").addEventListener("submit", async (event) => {
         content,
       }),
     });
-    state.resourceView = result;
     form.reset();
-    show({ paso: "Archivo guardado", result });
     await refresh();
+    const summary = findResourceSummaryByName(name);
+    if (summary) {
+      await loadResourceFull(summary.id);
+      render();
+    }
+    show({ paso: "Archivo guardado", result });
   } catch (err) {
     show({ error: err.message });
   }
@@ -984,10 +1120,16 @@ $("#project-upload-form").addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify({ rootName, files }),
     });
-
-    state.resourceView = result.manifest || null;
     form.reset();
     await refresh();
+    const preferredName = files.find((item) => /\.(html?|svg)$/i.test(item.name))?.name || files[0]?.name;
+    if (preferredName) {
+      const summary = findResourceSummaryByName(preferredName);
+      if (summary) {
+        await loadResourceFull(summary.id);
+        render();
+      }
+    }
     show({
       paso: `Proyecto cargado: ${result.fileCount} archivos listos para ChatGPT.${skipped ? ` ${skipped} omitidos.` : ""}`,
       result,
@@ -1144,9 +1286,23 @@ document.addEventListener("click", async (event) => {
   const resourceViewId = event.target.closest("[data-resource-view]")?.dataset.resourceView;
   if (resourceViewId) {
     try {
-      state.resourceView = await api(`/api/resources/${encodeURIComponent(resourceViewId)}`);
+      state.resourceView = await loadResourceFull(resourceViewId);
       renderResources();
+      updateResourcePreview().catch((err) => show({ error: err.message }));
       show("Vista previa actualizada.");
+    } catch (err) {
+      show({ error: err.message });
+    }
+    return;
+  }
+
+  const resourcePreviewId = event.target.closest("[data-resource-preview]")?.dataset.resourcePreview;
+  if (resourcePreviewId) {
+    try {
+      state.resourceView = await loadResourceFull(resourcePreviewId);
+      renderResources();
+      updateResourcePreview().catch((err) => show({ error: err.message }));
+      show("Vista visual actualizada.");
     } catch (err) {
       show({ error: err.message });
     }
@@ -1168,6 +1324,19 @@ document.addEventListener("click", async (event) => {
       if (state.resourceView?.id === resourceDeleteId) state.resourceView = null;
       show("Archivo eliminado.");
       await refresh();
+    } catch (err) {
+      show({ error: err.message });
+    }
+    return;
+  }
+
+  const activityResourceId = event.target.closest("[data-activity-resource]")?.dataset.activityResource;
+  if (activityResourceId) {
+    try {
+      state.resourceView = await loadResourceFull(activityResourceId);
+      renderResources();
+      updateResourcePreview().catch((err) => show({ error: err.message }));
+      show("Mostrando el archivo modificado.");
     } catch (err) {
       show({ error: err.message });
     }

@@ -1778,7 +1778,13 @@ export function createStore() {
           type: "archivo",
           title: previous ? "Archivo actualizado" : "Archivo cargado",
           summary: `${resource.name} ya esta disponible para que ChatGPT lo consulte.`,
-          meta: { resourceId: resource.id, name: resource.name, kind: resource.kind },
+          meta: {
+            resourceId: resource.id,
+            name: resource.name,
+            kind: resource.kind,
+            beforePreview: previous ? resourcePreview(previous.content) : "",
+            afterPreview: resourcePreview(resource.content),
+          },
         });
         return summarizeResource(resource, true);
       });
@@ -1849,6 +1855,7 @@ export function createStore() {
             fileCount: saved.length,
             createdCount,
             updatedCount,
+            manifestId: manifest.id,
           },
         });
 
