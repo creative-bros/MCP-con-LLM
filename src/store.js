@@ -82,6 +82,33 @@ function resourceKindFromName(name) {
   return "archivo";
 }
 
+function projectManifestMeta(resource) {
+  const normalizedName = String(resource?.name || "").replace(/\\/g, "/");
+  if (!normalizedName.endsWith("/__mcp_project_manifest.json")) {
+    return {
+      isProjectManifest: false,
+      projectRootName: "",
+      projectFileCount: 0,
+    };
+  }
+
+  const fallbackRoot = normalizedName.split("/__mcp_project_manifest.json")[0];
+  try {
+    const parsed = JSON.parse(String(resource?.content || "{}"));
+    return {
+      isProjectManifest: true,
+      projectRootName: String(parsed.rootName || fallbackRoot || ""),
+      projectFileCount: Number(parsed.fileCount || 0),
+    };
+  } catch {
+    return {
+      isProjectManifest: true,
+      projectRootName: fallbackRoot,
+      projectFileCount: 0,
+    };
+  }
+}
+
 function sha256Base64Url(value) {
   return createHash("sha256").update(String(value || ""), "utf8").digest("base64url");
 }
@@ -422,6 +449,7 @@ function normalizeOauthToken(input) {
 }
 
 function summarizeResource(resource, includeContent = false) {
+  const manifest = projectManifestMeta(resource);
   return {
     id: resource.id,
     kind: resource.kind,
@@ -432,6 +460,9 @@ function summarizeResource(resource, includeContent = false) {
     preview: resourcePreview(resource.content),
     createdAt: resource.createdAt,
     updatedAt: resource.updatedAt,
+    isProjectManifest: manifest.isProjectManifest,
+    projectRootName: manifest.projectRootName,
+    projectFileCount: manifest.projectFileCount,
     ...(includeContent ? { content: resource.content } : {}),
   };
 }
@@ -1799,7 +1830,7 @@ export function createStore() {
         const manifest = upsertProjectResource(project, {
           name: `${rootName}/__mcp_project_manifest.json`,
           kind: "documentacion",
-          description: `Indice del proyecto ${rootName} cargado para que ChatGPT reconozca su estructura.`,
+          description: `Indice del proyecto ${rootName} con ${saved.length} archivos listo para ChatGPT.`,
           mimeType: "application/json",
           content: JSON.stringify({
             rootName,

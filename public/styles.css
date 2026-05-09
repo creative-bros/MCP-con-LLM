@@ -634,6 +634,10 @@ pre {
   margin-bottom: 0;
 }
 
+.context-meta {
+  margin-top: 0;
+}
+
 .meta-box {
   min-width: 0;
   padding: 14px;

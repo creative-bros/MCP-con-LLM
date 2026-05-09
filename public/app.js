@@ -228,6 +228,10 @@ function totalRows() {
   return state.tables.reduce((sum, table) => sum + (table.rows?.length || 0), 0);
 }
 
+function uploadedProjectManifest() {
+  return state.resources.find((resource) => resource.isProjectManifest) || null;
+}
+
 function nextStep() {
   if (!state.project) {
     return {
@@ -552,6 +556,7 @@ function render() {
 
   const step = nextStep();
   const httpsReady = state.chatGptReady;
+  const uploadedProject = uploadedProjectManifest();
   $("#welcome-title").textContent = state.project?.title || "Workspace";
   $("#welcome-subtitle").textContent = `${state.user.email} | proyecto activo: ${state.project?.title || "Sin proyecto"}`;
   $("#ai-status").textContent = state.ai?.configured
@@ -573,9 +578,23 @@ function render() {
   $("#db-count").textContent = state.databases.length;
   $("#rows-count").textContent = totalRows();
   $("#mcp-url").value = state.mcpUrl || "";
-  $("#ready-note").textContent = httpsReady
-    ? "Tu URL ya esta en HTTPS y se puede usar directo en ChatGPT."
-    : "Esta URL es local. Para ChatGPT necesitas tunel HTTPS o dominio.";
+  $("#ready-note").textContent = uploadedProject
+    ? (httpsReady
+      ? `Tu URL ya esta en HTTPS y ya incluye el proyecto ${uploadedProject.projectRootName} para usarlo en ChatGPT.`
+      : `Ya cargaste el proyecto ${uploadedProject.projectRootName}. Solo falta publicar esta URL por HTTPS para usarlo en ChatGPT.`)
+    : (httpsReady
+      ? "Tu URL ya esta en HTTPS y se puede usar directo en ChatGPT."
+      : "Esta URL es local. Para ChatGPT necesitas tunel HTTPS o dominio.");
+
+  $("#project-context-account").classList.toggle("hidden", !uploadedProject);
+  if (uploadedProject) {
+    $("#project-context-name").textContent = uploadedProject.projectRootName || state.project?.title || "Proyecto";
+    $("#project-context-files").textContent = Number(uploadedProject.projectFileCount || 0).toLocaleString("es-MX");
+    $("#project-context-link").value = state.mcpUrl || "";
+    $("#project-context-copy").textContent = httpsReady
+      ? `Ya puedes pegar este link en ChatGPT y pedir instrucciones sobre ${uploadedProject.projectRootName}.`
+      : `El proyecto ${uploadedProject.projectRootName} ya esta cargado. Publica el MCP por HTTPS para usarlo en ChatGPT.`;
+  }
 
   renderProjects();
   renderTools();
@@ -1023,6 +1042,7 @@ $("#copy-url").addEventListener("click", async () => {
 });
 
 $("#copy-steps").addEventListener("click", async () => {
+  const uploadedProject = uploadedProjectManifest();
   const steps = [
     "1. Abre ChatGPT en Windows.",
     "2. Entra a Configuracion > Aplicaciones o Connectors.",
@@ -1034,6 +1054,7 @@ $("#copy-steps").addEventListener("click", async () => {
     "8. En un chat nuevo, activa ese MCP.",
     "9. Puedes preguntar cosas como:",
     "",
+    ...(uploadedProject ? [`revisa el proyecto ${uploadedProject.projectRootName} y dime su estructura`, ""] : []),
     "cuantas polizas tiene el sistema",
     "agrega al cliente Fernando Hernandez, fernando@email.com, 5526997998",
   ].join("\n");
